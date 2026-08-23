@@ -1,0 +1,19 @@
+{
+  "name": "school-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "음악학원 출결 관리 시스템 (Google Apps Script)",
+  "scripts": {
+    "login": "clasp login",
+    "which": "node scripts/target.js current",
+    "targets": "node scripts/target.js list",
+    "use": "node scripts/target.js use",
+    "push": "node scripts/target.js current && clasp push",
+    "pull": "node scripts/target.js current && clasp pull",
+    "open": "clasp open",
+    "logs": "clasp logs --watch"
+  },
+  "devDependencies": {
+    "@google/clasp": "^2.4.2"
+  }
+}

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>출결 관리자</title>
+  <?!= include('AppCss'); ?>
+</head>
+<body>
+<section class="screen" style="align-items:center; justify-content:center; padding:24px">
+  <div class="card-panel">
+    <h1 class="panel-title">관리자 화면</h1>
+    <p class="panel-desc">
+      기록 수정·취소·재발송 화면은 <strong>Phase 5</strong> 에서 만듭니다.
+      그때까지는 스프레드시트에서 직접 확인해주세요.
+    </p>
+
+    <div style="border-top:1px solid var(--line); padding-top:16px; margin-top:4px">
+      <p class="field-label" style="margin-bottom:10px">지금 쓸 수 있는 것</p>
+      <ul style="margin:0; padding-left:18px; font-size:14px; line-height:2; color:var(--ink-soft)">
+        <li><code>_출결_로그</code> 시트 — 출결 기록 원장</li>
+        <li><code>_출결_이력</code> 시트 — 변경 감사 로그</li>
+        <li>스프레드시트 <strong>[출결 관리]</strong> 메뉴 — 명부 동기화 · 출석부 재생성 · 정합성 점검</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</body>
+</html>

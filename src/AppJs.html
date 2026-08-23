@@ -1,0 +1,1160 @@
+<script>
+/**
+ * 출결 앱 클라이언트.
+ *
+ * Apps Script 웹앱은 왕복이 1~3초라 그대로 두면 현관에서 줄이 밀린다.
+ * 세 가지로 흡수한다.
+ *   1) 명부를 통째로 받아 localStorage 에 캐시 — 검색·스크롤은 서버 왕복 0
+ *   2) 탭하면 즉시 완료 표시, 저장은 백그라운드 (낙관적 UI)
+ *   3) 네트워크가 끊기면 큐에 쌓고 복구되면 한꺼번에 올린다
+ */
+(function () {
+  'use strict';
+
+  var LS = {
+    token: 'attend.token',
+    roster: 'attend.roster',
+    queue: 'attend.queue'
+  };
+
+  var state = {
+    token: null,
+    device: null,
+    academy: '',
+    students: [],
+    attendance: {},        // 학생ID -> {등원:'HH:mm', 하원:'HH:mm'}
+    pending: {},           // 학생ID -> {등원:true} 저장 중 표시
+    limits: { 소급최대분: 120, 중복차단분: 10, 단위분: 5 },
+    query: '',
+    subject: '',
+    sheetStudent: null,
+    customAt: null,        // 사용자가 고른 출결 시각 (null 이면 '지금')
+    notify: true,          // 관리자 모드에서 보호자 알림을 보낼지
+    pickedSubjects: [],    // 복수 과목 학생이 고른 수업
+    adminTicket: null,     // 관리자 잠금 해제 티켓 (시한부)
+    adminUntil: 0,         // 티켓 만료 시각(ms)
+    serverSkewMs: 0,       // 서버 - 태블릿 시계 차이
+    appUrl: '',
+    queue: []
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ── 시각 ────────────────────────────────────────────────── */
+
+  function nowServer() { return new Date(Date.now() + state.serverSkewMs); }
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function hhmm(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+
+  /** 로컬 시각을 초 없는 ISO 문자열로. 서버가 toDate_ 로 읽는다. */
+  function toLocalIso(d) {
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':00';
+  }
+
+  function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+
+  /**
+   * 출결 시각. 사용자가 한 번이라도 조정하면 그 값이 고정된다.
+   *
+   * 조정하기 전에는 '지금' 이 계속 흐르고, 조정한 뒤에는 값이 멈춘다.
+   * 눌러서 맞춰 놓은 시각이 초침 따라 움직이면 곤란하기 때문이다.
+   */
+  function targetTime() {
+    return state.customAt ? new Date(state.customAt.getTime()) : nowServer();
+  }
+
+  /** 조정 하한. 관리자 모드에서는 사실상 제한이 없다. */
+  function minAllowed() {
+    var back = isAdminActive() ? 400 * 24 * 60 : state.limits.소급최대분;
+    return new Date(nowServer().getTime() - back * 60000);
+  }
+
+  /** 고른 시각을 범위 안으로 밀어 넣는다. */
+  function clampAt(d) {
+    var now = nowServer();
+    var lo = minAllowed();
+    if (d.getTime() > now.getTime()) return now;
+    if (d.getTime() < lo.getTime()) return lo;
+    return d;
+  }
+
+  function isAdminActive() {
+    return !!state.adminTicket && Date.now() < state.adminUntil;
+  }
+
+  /* ── 초성 ────────────────────────────────────────────────── */
+
+  var CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ',
+             'ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+
+  function chosung(s) {
+    var out = '';
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      out += (c >= 0xac00 && c <= 0xd7a3)
+        ? CHO[Math.floor((c - 0xac00) / 588)]
+        : s.charAt(i);
+    }
+    return out;
+  }
+
+  /** 인덱스 레일에 쓸 대표 자음 */
+  function groupOf(name) {
+    var c = name.charCodeAt(0);
+    if (c >= 0xac00 && c <= 0xd7a3) {
+      var cho = CHO[Math.floor((c - 0xac00) / 588)];
+      return { 'ㄲ': 'ㄱ', 'ㄸ': 'ㄷ', 'ㅃ': 'ㅂ', 'ㅆ': 'ㅅ', 'ㅉ': 'ㅈ' }[cho] || cho;
+    }
+    return '#';
+  }
+
+  var RAIL = ['ㄱ','ㄴ','ㄷ','ㄹ','ㅁ','ㅂ','ㅅ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ','#'];
+
+  /* ── 저장소 ──────────────────────────────────────────────── */
+
+  function lsGet(key, fallback) {
+    try {
+      var v = localStorage.getItem(key);
+      return v ? JSON.parse(v) : fallback;
+    } catch (e) { return fallback; }
+  }
+  function lsSet(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* 용량 초과 무시 */ }
+  }
+
+  /* ── 서버 호출 ───────────────────────────────────────────── */
+
+  function call(fn, args) {
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (e) { reject(new Error(e && e.message ? e.message : String(e))); })
+        [fn].apply(null, args || []);
+    });
+  }
+
+  /* ── 알림 ────────────────────────────────────────────────── */
+
+  var toastTimer = null;
+  function toast(msg, isError) {
+    var el = $('toast');
+    el.textContent = msg;
+    el.className = 'toast' + (isError ? ' err' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.add('hidden'); }, isError ? 4200 : 2200);
+  }
+
+  /* ── 화면 전환 ───────────────────────────────────────────── */
+
+  function showRegister(reason) {
+    $('main').classList.add('hidden');
+    $('register').classList.remove('hidden');
+    if (reason) $('registerReason').textContent = reason;
+  }
+
+  function showMain() {
+    $('register').classList.add('hidden');
+    $('main').classList.remove('hidden');
+  }
+
+  /* ── 부팅 ────────────────────────────────────────────────── */
+
+  function boot() {
+    // 주소에 실린 토큰이 최우선이다.
+    // Apps Script 는 화면 iframe 의 도메인이 바뀔 수 있어 localStorage 가
+    // 통째로 사라질 때가 있는데, 그때도 즐겨찾기 주소만으로 복구된다.
+    var fromUrl = (window.__BOOT__ && window.__BOOT__.token) || '';
+    state.appUrl = (window.__BOOT__ && window.__BOOT__.appUrl) || '';
+    state.token = fromUrl || lsGet(LS.token, null);
+    if (fromUrl) lsSet(LS.token, fromUrl);
+    state.queue = lsGet(LS.queue, []);
+
+    var cached = lsGet(LS.roster, null);
+    if (cached && cached.students) {
+      state.students = cached.students;
+      state.attendance = cached.attendance || {};
+      state.academy = cached.academy || '';
+      state.device = cached.device || null;
+      if (state.token) { showMain(); render(); }   // 캐시로 즉시 그린다
+    }
+
+    call('getBootstrap', [state.token]).then(function (res) {
+      if (!res) throw new Error('서버 응답이 비어 있습니다.');
+      applyServerTime(res.serverTime);
+
+      if (res.needsRegister) { showRegister(res.reason); return; }
+
+      state.device = res.device;
+      state.academy = res.academy;
+      state.students = res.roster || [];
+      state.attendance = res.attendance || {};
+      if (res.limits) state.limits = res.limits;
+
+      lsSet(LS.roster, {
+        students: state.students,
+        attendance: state.attendance,
+        academy: state.academy,
+        device: state.device
+      });
+
+      showMain();
+      render();
+      flushQueue();
+    }).catch(function (e) {
+      if (state.students.length) {
+        toast('오프라인 상태입니다. 저장된 명부로 진행합니다.', true);
+      } else {
+        showRegister('서버에 연결하지 못했습니다: ' + e.message);
+      }
+    });
+  }
+
+  function applyServerTime(stamp) {
+    if (!stamp) return;
+    var t = new Date(stamp.replace(' ', 'T'));
+    if (!isNaN(t.getTime())) state.serverSkewMs = t.getTime() - Date.now();
+  }
+
+  /* ── 기기 등록 ───────────────────────────────────────────── */
+
+  var chosenMode = 'kiosk';
+
+  function initRegister() {
+    Array.prototype.forEach.call(document.querySelectorAll('.mode-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        Array.prototype.forEach.call(document.querySelectorAll('.mode-btn'), function (b) {
+          b.classList.remove('selected');
+        });
+        btn.classList.add('selected');
+        chosenMode = btn.dataset.mode;
+      });
+    });
+
+    $('regSubmit').addEventListener('click', function () {
+      var pin = $('regPin').value.trim();
+      var label = $('regLabel').value.trim();
+      var err = $('regError');
+      err.classList.add('hidden');
+
+      if (!pin) { err.textContent = '관리자 PIN 을 입력해주세요.'; err.classList.remove('hidden'); return; }
+      if (!label) { err.textContent = '기기 별명을 입력해주세요.'; err.classList.remove('hidden'); return; }
+
+      $('regSubmit').disabled = true;
+      $('regSubmit').textContent = '등록 중…';
+
+      call('registerDevice', [pin, label, chosenMode]).then(function (res) {
+        $('regSubmit').disabled = false;
+        $('regSubmit').textContent = '등록하기';
+        if (!res.ok) { err.textContent = res.message; err.classList.remove('hidden'); return; }
+        state.token = res.token;
+        lsSet(LS.token, res.token);
+        $('regPin').value = '';
+        toast(res.message);
+        showBookmark(res.token);
+      }).catch(function (e) {
+        $('regSubmit').disabled = false;
+        $('regSubmit').textContent = '등록하기';
+        err.textContent = e.message;
+        err.classList.remove('hidden');
+      });
+    });
+  }
+
+  /* ── 즐겨찾기 주소 안내 ──────────────────────────────────── */
+
+  function bookmarkUrl(token) {
+    if (!state.appUrl) return '';
+    return state.appUrl + (state.appUrl.indexOf('?') === -1 ? '?' : '&') +
+      't=' + encodeURIComponent(token);
+  }
+
+  function showBookmark(token) {
+    var url = bookmarkUrl(token);
+    if (!url) { boot(); return; }        // 주소를 못 구하면 그냥 시작한다
+    $('register').classList.add('hidden');
+    $('main').classList.add('hidden');
+    $('bookmarkUrl').textContent = url;
+    $('bookmark').classList.remove('hidden');
+  }
+
+  function initBookmark() {
+    $('copyUrl').addEventListener('click', function () {
+      var url = $('bookmarkUrl').textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url)
+          .then(function () { toast('주소를 복사했습니다.'); })
+          .catch(function () { selectUrlText(); });
+      } else {
+        selectUrlText();
+      }
+    });
+    $('gotoApp').addEventListener('click', function () {
+      $('bookmark').classList.add('hidden');
+      boot();
+    });
+  }
+
+  function selectUrlText() {
+    var el = $('bookmarkUrl');
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    toast('주소를 길게 눌러 복사해주세요.');
+  }
+
+  /* ── 명부 렌더 ───────────────────────────────────────────── */
+
+  function visibleStudents() {
+    var q = state.query.trim();
+    var qc = chosung(q);
+    return state.students.filter(function (s) {
+      if (state.subject && s.subject !== state.subject) return false;
+      if (!q) return true;
+      return s.name.indexOf(q) !== -1 || (s.chosung || '').indexOf(qc) !== -1;
+    });
+  }
+
+  function render() {
+    $('academyName').textContent = state.academy;
+    if (state.device) {
+      $('deviceTag').textContent = state.device.label +
+        ' · ' + (state.device.mode === 'kiosk' ? '키오스크' : '직원');
+    }
+    renderChips();
+    renderRoster();
+    renderQueueBadge();
+  }
+
+  function renderChips() {
+    var box = $('filterChips');
+    var subjects = [];
+    state.students.forEach(function (s) {
+      if (s.subject && subjects.indexOf(s.subject) === -1) subjects.push(s.subject);
+    });
+    subjects.sort();
+
+    box.innerHTML = '';
+    var all = document.createElement('button');
+    all.className = 'chip' + (state.subject ? '' : ' on');
+    all.textContent = '전체';
+    all.addEventListener('click', function () { state.subject = ''; render(); });
+    box.appendChild(all);
+
+    subjects.forEach(function (sub) {
+      var b = document.createElement('button');
+      b.className = 'chip' + (state.subject === sub ? ' on' : '');
+      b.textContent = sub;
+      b.addEventListener('click', function () {
+        state.subject = (state.subject === sub) ? '' : sub;
+        render();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function renderRoster() {
+    var list = visibleStudents();
+    var box = $('roster');
+    box.innerHTML = '';
+
+    $('emptyState').classList.toggle('hidden', list.length > 0);
+
+    // 키오스크(학생용)에서는 인원 수를 보여주지 않는다.
+    // 학생이 현관에서 볼 화면에 학원 규모가 드러날 이유가 없다.
+    var kiosk = state.device && state.device.mode === 'kiosk';
+    if (kiosk) {
+      $('statusCount').textContent = '';
+    } else {
+      // 휴원생도 명부에 있으므로 숫자를 갈라서 보여준다.
+      // '명부 69명' 만 쓰면 휴원생이 들어갔는지 알 수 없다.
+      var total = state.students.length;
+      var onLeave = 0;
+      var done = 0;
+      state.students.forEach(function (s) {
+        if (s.onLeave) onLeave++;
+        if (state.attendance[s.id] && state.attendance[s.id]['등원']) done++;
+      });
+
+      var parts = ['재원 ' + (total - onLeave) + '명'];
+      if (onLeave) parts.push('휴원 ' + onLeave + '명');
+      parts.push('합계 ' + total + '명');
+      parts.push('등원 ' + done + '명');
+      if (list.length !== total) parts.push('표시 ' + list.length + '명');
+      $('statusCount').textContent = parts.join(' · ');
+    }
+
+    // 가나다순으로 묶는다
+    var groups = {};
+    list.slice().sort(function (a, b) {
+      return a.name.localeCompare(b.name, 'ko');
+    }).forEach(function (s) {
+      var g = groupOf(s.name);
+      (groups[g] = groups[g] || []).push(s);
+    });
+
+    var present = {};
+    RAIL.forEach(function (g) {
+      if (!groups[g] || !groups[g].length) return;
+      present[g] = true;
+
+      var head = document.createElement('div');
+      head.className = 'group-head';
+      head.id = 'group-' + g;
+      head.textContent = g + ' (' + groups[g].length + ')';
+      box.appendChild(head);
+
+      var grid = document.createElement('div');
+      grid.className = 'group-grid';
+      groups[g].forEach(function (s) { grid.appendChild(studentCard(s)); });
+      box.appendChild(grid);
+    });
+
+    renderRail(present);
+  }
+
+  function studentCard(s) {
+    var att = state.attendance[s.id] || {};
+    var pend = state.pending[s.id] || {};
+
+    var el = document.createElement('button');
+    el.className = 'student' +
+      (att['하원'] ? ' done-out' : (att['등원'] ? ' done-in' : '')) +
+      (s.onLeave ? ' on-leave' : '');
+    el.addEventListener('click', function () { openSheet(s); });
+
+    var name = document.createElement('div');
+    name.className = 'student-name';
+    name.textContent = s.name;
+    el.appendChild(name);
+
+    if (s.subject) {
+      var sub = document.createElement('div');
+      sub.className = 'student-sub';
+      sub.textContent = s.subject;
+      el.appendChild(sub);
+    }
+
+    var badges = document.createElement('div');
+    badges.className = 'badges';
+
+    if (s.onLeave) badges.appendChild(badge('leave', '휴원 중'));
+    if (att['등원']) badges.appendChild(badge('in', '등원 ' + att['등원']));
+    if (att['하원']) badges.appendChild(badge('out', '하원 ' + att['하원']));
+    if (pend['등원'] || pend['하원']) badges.appendChild(badge('pending', '저장 중…'));
+
+    if (!s.hasPhone) {
+      var nb = badge('nophone', '연락처 미등록');
+      nb.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        openPhoneDialog(s);
+      });
+      badges.appendChild(nb);
+    }
+
+    if (badges.children.length) el.appendChild(badges);
+    return el;
+  }
+
+  function badge(kind, text) {
+    var b = document.createElement('span');
+    b.className = 'badge ' + kind;
+    b.textContent = text;
+    return b;
+  }
+
+  function renderRail(present) {
+    var rail = $('indexRail');
+    rail.innerHTML = '';
+    RAIL.forEach(function (g) {
+      var b = document.createElement('button');
+      b.textContent = g;
+      if (!present[g]) b.className = 'off';
+      b.addEventListener('click', function () {
+        var head = $('group-' + g);
+        if (head) head.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      rail.appendChild(b);
+    });
+  }
+
+  function renderQueueBadge() {
+    var el = $('queueBadge');
+    if (!state.queue.length) { el.classList.add('hidden'); return; }
+    el.textContent = '전송 대기 ' + state.queue.length + '건';
+    el.classList.remove('hidden');
+  }
+
+  /* ── 바텀시트 ────────────────────────────────────────────── */
+
+  function openSheet(s) {
+    state.sheetStudent = s;
+
+    $('sheetName').textContent = s.name;
+    var att = state.attendance[s.id] || {};
+    var parts = [];
+    if (s.onLeave) parts.push('휴원 중');
+    if (s.subject) parts.push(s.subject);
+    if (att['등원']) parts.push('등원 ' + att['등원']);
+    if (att['하원']) parts.push('하원 ' + att['하원']);
+    if (!s.hasPhone) parts.push('연락처 미등록');
+    $('sheetSub').textContent = parts.join(' · ');
+
+    var needPin = state.device && state.device.mode === 'kiosk' && s.hasPin;
+    $('sheetPinRow').classList.toggle('hidden', !needPin);
+    $('sheetPin').value = '';
+
+    $('sheetMsg').classList.add('hidden');
+    $('btnIn').disabled = false;
+    $('btnOut').disabled = false;
+
+    state.customAt = null;
+    state.notify = defaultNotify();
+    state.pickedSubjects = (s.subjects || []).slice();   // 기본은 전부 선택
+    renderSubjectPick();
+    renderAdminPick();
+    updateSheetTimes();
+    $('sheetBackdrop').classList.remove('hidden');
+    $('sheet').classList.remove('hidden');
+  }
+
+  function closeSheet() {
+    closeTimePicker();
+    $('sheet').classList.add('hidden');
+    $('sheetBackdrop').classList.add('hidden');
+    state.sheetStudent = null;
+    state.customAt = null;
+  }
+
+  function updateSheetTimes() {
+    var target = targetTime();
+    var now = nowServer();
+    var t = hhmm(target);
+    var otherDay = ymd(target) !== ymd(now);
+    var label = otherDay ? (ymd(target).slice(5).replace('-', '/') + ' ' + t) : t;
+
+    $('btnInTime').textContent = label;
+    $('btnOutTime').textContent = label;
+    $('adjustValue').textContent = t;
+    $('sheetNow').textContent = hhmm(now);
+    $('resetTime').classList.toggle('invisible', !state.customAt);
+
+    // 미래는 관리자라도 막는다
+    var lo = minAllowed().getTime();
+    var hi = now.getTime();
+    [1, 5].forEach(function (step) {
+      $('plus' + step).disabled = target.getTime() + step * 60000 > hi + 60000;
+      $('minus' + step).disabled = target.getTime() - step * 60000 < lo;
+    });
+  }
+
+  /**
+   * 시각을 분 단위로 민다.
+   * 처음 누를 때는 지금(초 버림)에서 출발한다.
+   */
+  function adjust(delta) {
+    var base = state.customAt || (function () {
+      var n = nowServer();
+      n.setSeconds(0, 0);
+      return n;
+    })();
+    state.customAt = clampAt(new Date(base.getTime() + delta * 60000));
+    renderAdminPick();
+    updateSheetTimes();
+  }
+
+  /* ── 기록 ────────────────────────────────────────────────── */
+
+  function submit(kind, force) {
+    var s = state.sheetStudent;
+    if (!s) return;
+
+    var at = targetTime();
+    at.setSeconds(0, 0);
+    var atText = hhmm(at);
+
+    var needPin = state.device && state.device.mode === 'kiosk' && s.hasPin;
+    var pin = needPin ? $('sheetPin').value.trim() : '';
+    if (needPin && !pin) {
+      showSheetMsg('학생 PIN 을 입력해주세요.');
+      return;
+    }
+
+    var payload = {
+      token: state.token,
+      studentId: s.id,
+      kind: kind,
+      atIso: toLocalIso(at),
+      pin: pin,
+      force: !!force,
+      adminTicket: isAdminActive() ? state.adminTicket : '',
+      notify: isAdminActive() ? !!state.notify : true,
+      subjects: state.pickedSubjects.slice(),
+      clientId: s.id + '|' + kind + '|' + toLocalIso(at) +
+        (state.pickedSubjects.length ? '|' + state.pickedSubjects.join(',') : '')
+    };
+
+    // 낙관적 UI — 화면을 먼저 갱신하고 저장은 백그라운드로.
+    // 단 지난 날짜를 소급 기록할 때는 '오늘' 배지를 건드리면 안 된다.
+    var isToday = ymd(at) === ymd(nowServer());
+    var previous;
+    if (isToday) {
+      if (!state.attendance[s.id]) state.attendance[s.id] = {};
+      previous = state.attendance[s.id][kind];
+      state.attendance[s.id][kind] = atText;
+      if (!state.pending[s.id]) state.pending[s.id] = {};
+      state.pending[s.id][kind] = true;
+    }
+
+    closeSheet();
+    renderRoster();
+    var subjNote = (s.subjects && s.subjects.length > 1 &&
+      state.pickedSubjects.length < s.subjects.length)
+      ? ' (' + state.pickedSubjects.join('·') + ')' : '';
+    toast(s.name + subjNote + ' ' + kind + ' ' +
+      (isToday ? atText : (ymd(at).slice(5).replace('-', '/') + ' ' + atText)));
+
+    call('recordAttendance', [payload]).then(function (res) {
+      if (isToday) clearPending(s.id, kind);
+
+      if (res.ok) {
+        if (isToday) state.attendance[s.id][kind] = res.at;
+        persistRoster();
+        renderRoster();
+        if (res.admin && !res.notified) {
+          toast(s.name + ' ' + kind + ' 기록 완료 (알림은 보내지 않았습니다)');
+        }
+        return;
+      }
+
+      // 실패 — 화면을 되돌린다
+      if (isToday) rollback(s.id, kind, previous);
+
+      if (res.needsRegister) { showRegister(res.message); return; }
+      if (res.needsConfirm) { askConfirm(res.message, function () { submit(kind, true); }); return; }
+      if (res.needsPin) { openSheet(s); showSheetMsg(res.message); return; }
+      toast(res.message, true);
+    }).catch(function () {
+      if (isToday) clearPending(s.id, kind);
+      // 네트워크 문제 — 큐에 쌓고 복구되면 올린다
+      state.queue.push(payload);
+      lsSet(LS.queue, state.queue);
+      persistRoster();
+      renderRoster();
+      toast('네트워크가 불안정해 대기열에 넣었습니다.', true);
+    });
+  }
+
+  function clearPending(id, kind) {
+    if (state.pending[id]) {
+      delete state.pending[id][kind];
+      if (!Object.keys(state.pending[id]).length) delete state.pending[id];
+    }
+  }
+
+  function rollback(id, kind, previous) {
+    if (previous) state.attendance[id][kind] = previous;
+    else if (state.attendance[id]) delete state.attendance[id][kind];
+    persistRoster();
+    renderRoster();
+  }
+
+  function persistRoster() {
+    lsSet(LS.roster, {
+      students: state.students,
+      attendance: state.attendance,
+      academy: state.academy,
+      device: state.device
+    });
+  }
+
+  function showSheetMsg(msg) {
+    var el = $('sheetMsg');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  /* ── 과목 선택 ───────────────────────────────────────────── */
+
+  /**
+   * 복수 과목 학생만 고르게 한다.
+   * 피아노만 온 날과 작곡까지 온 날은 출석부 표시가 달라야 한다.
+   */
+  function renderSubjectPick() {
+    var s = state.sheetStudent;
+    var list = (s && s.subjects) || [];
+    $('subjectPick').classList.toggle('hidden', list.length < 2);
+    if (list.length < 2) return;
+
+    var box = $('subjectChips');
+    box.innerHTML = '';
+    list.forEach(function (sub) {
+      var on = state.pickedSubjects.indexOf(sub) !== -1;
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'subject-chip' + (on ? ' on' : '');
+
+      var tick = document.createElement('span');
+      tick.className = 'tick';
+      tick.textContent = '✓';
+      b.appendChild(tick);
+
+      var label = document.createElement('span');
+      label.textContent = sub;
+      b.appendChild(label);
+
+      b.addEventListener('click', function () { toggleSubject(sub); });
+      box.appendChild(b);
+    });
+  }
+
+  function toggleSubject(sub) {
+    var i = state.pickedSubjects.indexOf(sub);
+    if (i === -1) state.pickedSubjects.push(sub);
+    else state.pickedSubjects.splice(i, 1);
+
+    // 전부 끄면 기록할 대상이 없다. 마지막 하나는 남긴다.
+    if (!state.pickedSubjects.length) {
+      state.pickedSubjects = [sub];
+      toast('수업을 최소 하나는 골라야 합니다.', true);
+    }
+    renderSubjectPick();
+  }
+
+  /* ── 시각 피커 ───────────────────────────────────────────── */
+
+  var ITEM_H = 48;
+  var picker = { hour: 0, min: 0, timer: null };
+
+  function buildWheel(el, count, selected) {
+    el.innerHTML = '';
+    for (var i = 0; i < count; i++) {
+      var d = document.createElement('div');
+      d.className = 'wheel-item';
+      d.textContent = pad(i);
+      d.dataset.value = i;
+      el.appendChild(d);
+    }
+    // 스크롤 위치를 선택값에 맞춘다
+    el.scrollTop = selected * ITEM_H;
+  }
+
+  function wheelValue(el) {
+    return Math.max(0, Math.min(
+      el.children.length - 1,
+      Math.round(el.scrollTop / ITEM_H)
+    ));
+  }
+
+  function markWheel(el, value) {
+    for (var i = 0; i < el.children.length; i++) {
+      el.children[i].classList.toggle('on', i === value);
+    }
+  }
+
+  /** 고른 시각이 미래인지 보고 안내를 갱신한다. */
+  function refreshPreview() {
+    var base = targetTime();
+    var candidate = new Date(
+      base.getFullYear(), base.getMonth(), base.getDate(),
+      picker.hour, picker.min, 0, 0
+    );
+    var now = nowServer();
+    var future = candidate.getTime() > now.getTime() + 60000;
+
+    $('timePreview').textContent = pad(picker.hour) + ':' + pad(picker.min);
+    var hint = $('timeHint');
+    if (future) {
+      hint.textContent = '아직 오지 않은 시각입니다. 설정하면 현재 시각으로 맞춰집니다.';
+      hint.className = 'time-hint warn';
+    } else {
+      hint.textContent = '위아래로 굴려서 맞춘 뒤 설정을 누르세요.';
+      hint.className = 'time-hint';
+    }
+    markWheel($('wheelHour'), picker.hour);
+    markWheel($('wheelMin'), picker.min);
+  }
+
+  function openTimePicker() {
+    if (!state.sheetStudent) return;
+    var cur = targetTime();
+    picker.hour = cur.getHours();
+    picker.min = cur.getMinutes();
+
+    buildWheel($('wheelHour'), 24, picker.hour);
+    buildWheel($('wheelMin'), 60, picker.min);
+    refreshPreview();
+
+    $('timeBackdrop').classList.remove('hidden');
+    $('timeDialog').classList.remove('hidden');
+  }
+
+  function closeTimePicker() {
+    $('timeDialog').classList.add('hidden');
+    $('timeBackdrop').classList.add('hidden');
+  }
+
+  function applyTimePicker() {
+    var base = targetTime();
+    var next = new Date(
+      base.getFullYear(), base.getMonth(), base.getDate(),
+      picker.hour, picker.min, 0, 0
+    );
+    var clamped = clampAt(next);
+    state.customAt = clamped;
+
+    closeTimePicker();
+    renderAdminPick();
+    updateSheetTimes();
+
+    if (clamped.getTime() !== next.getTime()) {
+      toast('허용 범위를 벗어나 ' + hhmm(clamped) + ' 로 맞췄습니다.', true);
+    }
+  }
+
+  function initTimePicker() {
+    $('adjustValue').addEventListener('click', openTimePicker);
+    $('timeApply').addEventListener('click', applyTimePicker);
+    $('timeCancel').addEventListener('click', closeTimePicker);
+    $('timeBackdrop').addEventListener('click', closeTimePicker);
+
+    [['wheelHour', 'hour'], ['wheelMin', 'min']].forEach(function (pair) {
+      var el = $(pair[0]);
+      el.addEventListener('scroll', function () {
+        clearTimeout(picker.timer);
+        picker.timer = setTimeout(function () {
+          picker[pair[1]] = wheelValue(el);
+          refreshPreview();
+        }, 90);
+      });
+      // 항목을 직접 눌러도 선택된다
+      el.addEventListener('click', function (e) {
+        var v = e.target && e.target.dataset ? e.target.dataset.value : null;
+        if (v === null || v === undefined) return;
+        el.scrollTo({ top: Number(v) * ITEM_H, behavior: 'smooth' });
+        picker[pair[1]] = Number(v);
+        refreshPreview();
+      });
+    });
+  }
+
+  /* ── 관리자 모드 ─────────────────────────────────────────── */
+
+  function openAdminDialog() {
+    if (isAdminActive()) {
+      askConfirm('관리자 모드를 해제할까요?', function () {
+        call('lockAdmin', [state.adminTicket]).catch(function () {});
+        state.adminTicket = null;
+        state.adminUntil = 0;
+        renderAdminBadge();
+        toast('관리자 모드를 해제했습니다.');
+      });
+      return;
+    }
+    $('adminPin').value = '';
+    $('adminError').classList.add('hidden');
+    $('adminSub').textContent =
+      '지난 날짜의 출결을 기록하려면 관리자 PIN 이 필요합니다. ' +
+      '해제 후 ' + (state.limits.관리자유효분 || 30) + '분간 유지됩니다.';
+    $('adminBackdrop').classList.remove('hidden');
+    $('adminDialog').classList.remove('hidden');
+  }
+
+  function closeAdminDialog() {
+    $('adminDialog').classList.add('hidden');
+    $('adminBackdrop').classList.add('hidden');
+  }
+
+  function doUnlock() {
+    var pin = $('adminPin').value.trim();
+    var err = $('adminError');
+    if (!pin) { err.textContent = '관리자 PIN 을 입력해주세요.'; err.classList.remove('hidden'); return; }
+
+    $('adminUnlock').disabled = true;
+    call('unlockAdmin', [state.token, pin]).then(function (res) {
+      $('adminUnlock').disabled = false;
+      if (!res.ok) { err.textContent = res.message; err.classList.remove('hidden'); return; }
+      state.adminTicket = res.ticket;
+      state.adminUntil = Date.now() + res.minutes * 60000;
+      $('adminPin').value = '';
+      closeAdminDialog();
+      renderAdminBadge();
+      toast(res.message);
+    }).catch(function (e) {
+      $('adminUnlock').disabled = false;
+      err.textContent = e.message;
+      err.classList.remove('hidden');
+    });
+  }
+
+  function renderAdminBadge() {
+    var on = isAdminActive();
+    $('adminBtn').classList.toggle('admin-on', on);
+    var badge = $('adminBadge');
+    if (!on) { badge.classList.add('hidden'); return; }
+    var left = Math.max(0, Math.ceil((state.adminUntil - Date.now()) / 60000));
+    badge.textContent = '관리자 ' + left + '분';
+    badge.classList.remove('hidden');
+  }
+
+  /**
+   * 알림을 보낼지의 기본값.
+   *
+   * 지난 날짜이거나 평소 소급 한도를 넘긴 기록은 뒤늦은 알림이 되므로 끈다.
+   * 오늘, 그것도 얼마 안 지난 기록이면 평소처럼 보낸다.
+   */
+  function defaultNotify() {
+    if (!isAdminActive()) return true;
+    var at = targetTime();
+    var now = nowServer();
+    if (ymd(at) !== ymd(now)) return false;
+    var backMin = (now.getTime() - at.getTime()) / 60000;
+    return backMin <= state.limits.소급최대분;
+  }
+
+  function renderNotifyToggle() {
+    var btn = $('notifyToggle');
+    btn.classList.toggle('on', !!state.notify);
+    $('notifyBox').textContent = state.notify ? '✓' : '';
+
+    var at = targetTime();
+    var otherDay = ymd(at) !== ymd(nowServer());
+    $('notifyLabel').textContent = state.notify
+      ? '보호자에게 알림을 보냅니다'
+      : '보호자에게 알림을 보내지 않습니다';
+    $('notifyHint').textContent = otherDay
+      ? '지난 날짜(' + ymd(at).slice(5).replace('-', '/') + ') 기록이라 기본은 끔입니다.'
+      : (state.notify ? '눌러서 끌 수 있습니다.' : '눌러서 켤 수 있습니다.');
+  }
+
+  /** 바텀시트의 날짜·시각 직접 입력 영역 */
+  function renderAdminPick() {
+    var on = isAdminActive();
+    $('adminPick').classList.toggle('hidden', !on);
+    if (!on) return;
+    renderNotifyToggle();
+
+    var cur = targetTime();
+    $('pickDate').value = ymd(cur);
+    $('pickDate').max = ymd(nowServer());
+
+    var box = $('quickDays');
+    box.innerHTML = '';
+    var labels = ['일', '월', '화', '수', '목', '금', '토'];
+    for (var i = 0; i < 7; i++) {
+      (function (back) {
+        var d = new Date(nowServer().getTime() - back * 86400000);
+        var key = ymd(d);
+        var b = document.createElement('button');
+        b.className = 'quick-day' + (ymd(targetTime()) === key ? ' on' : '');
+        b.textContent = back === 0 ? '오늘'
+          : back === 1 ? '어제'
+          : (d.getMonth() + 1) + '/' + d.getDate() + '(' + labels[d.getDay()] + ')';
+        b.addEventListener('click', function () {
+          setDatePart(key);
+        });
+        box.appendChild(b);
+      })(i);
+    }
+  }
+
+  /** 시각은 그대로 두고 날짜만 바꾼다. */
+  function setDatePart(dateStr) {
+    var parts = dateStr.split('-');
+    var cur = targetTime();
+    var next = new Date(
+      Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]),
+      cur.getHours(), cur.getMinutes(), 0, 0
+    );
+    state.customAt = clampAt(next);
+    state.notify = defaultNotify();
+    renderAdminPick();
+    updateSheetTimes();
+  }
+
+  function initAdmin() {
+    $('notifyToggle').addEventListener('click', function () {
+      state.notify = !state.notify;
+      renderNotifyToggle();
+    });
+    $('adminBtn').addEventListener('click', openAdminDialog);
+    $('adminUnlock').addEventListener('click', doUnlock);
+    $('adminCancel').addEventListener('click', closeAdminDialog);
+    $('adminBackdrop').addEventListener('click', closeAdminDialog);
+    $('adminPin').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') doUnlock();
+    });
+
+    $('pickDate').addEventListener('change', function (e) {
+      if (e.target.value) setDatePart(e.target.value);
+    });
+  }
+
+  /* ── 오프라인 큐 ─────────────────────────────────────────── */
+
+  function flushQueue() {
+    if (!state.queue.length || !state.token) return;
+    var batch = state.queue.slice();
+
+    call('recordAttendanceBatch', [state.token, batch]).then(function (res) {
+      var okIds = {};
+      (res.results || []).forEach(function (r) {
+        if (r.ok && r.clientId) okIds[r.clientId] = true;
+      });
+      state.queue = state.queue.filter(function (it) { return !okIds[it.clientId]; });
+      lsSet(LS.queue, state.queue);
+      renderQueueBadge();
+      var sent = batch.length - state.queue.length;
+      if (sent > 0) toast('대기 중이던 ' + sent + '건을 전송했습니다.');
+      if (sent > 0) refresh(true);
+    }).catch(function () { /* 여전히 오프라인 — 다음 기회에 */ });
+  }
+
+  /* ── 연락처 입력 ─────────────────────────────────────────── */
+
+  var phoneTarget = null;
+
+  function openPhoneDialog(s) {
+    phoneTarget = s;
+    $('phoneName').textContent = s.name;
+    $('phoneInput').value = '';
+    $('phoneError').classList.add('hidden');
+    $('phoneBackdrop').classList.remove('hidden');
+    $('phoneDialog').classList.remove('hidden');
+  }
+
+  function closePhoneDialog() {
+    $('phoneDialog').classList.add('hidden');
+    $('phoneBackdrop').classList.add('hidden');
+    phoneTarget = null;
+  }
+
+  function savePhone() {
+    if (!phoneTarget) return;
+    var val = $('phoneInput').value.trim();
+    var err = $('phoneError');
+    if (!val) { err.textContent = '전화번호를 입력해주세요.'; err.classList.remove('hidden'); return; }
+
+    $('phoneSave').disabled = true;
+    call('saveGuardianPhoneFromApp', [state.token, phoneTarget.id, val]).then(function (res) {
+      $('phoneSave').disabled = false;
+      if (!res.ok) { err.textContent = res.message; err.classList.remove('hidden'); return; }
+      for (var i = 0; i < state.students.length; i++) {
+        if (state.students[i].id === phoneTarget.id) { state.students[i].hasPhone = true; break; }
+      }
+      persistRoster();
+      closePhoneDialog();
+      renderRoster();
+      toast(res.message);
+    }).catch(function (e) {
+      $('phoneSave').disabled = false;
+      err.textContent = e.message;
+      err.classList.remove('hidden');
+    });
+  }
+
+  /* ── 확인 대화상자 ───────────────────────────────────────── */
+
+  var confirmAction = null;
+
+  function askConfirm(text, onYes) {
+    $('confirmText').textContent = text;
+    confirmAction = onYes;
+    $('confirmBackdrop').classList.remove('hidden');
+    $('confirmDialog').classList.remove('hidden');
+  }
+
+  function closeConfirm() {
+    $('confirmDialog').classList.add('hidden');
+    $('confirmBackdrop').classList.add('hidden');
+    confirmAction = null;
+  }
+
+  /* ── 새로고침 ────────────────────────────────────────────── */
+
+  function refresh(silent) {
+    var btn = $('refreshBtn');
+    btn.classList.add('spinning');
+    call('refreshRoster', [state.token]).then(function (res) {
+      btn.classList.remove('spinning');
+      if (!res.ok) { showRegister(res.message); return; }
+      applyServerTime(res.serverTime);
+      state.students = res.roster || [];
+      state.attendance = res.attendance || {};
+      persistRoster();
+      render();
+      if (!silent) toast('명부를 새로고침했습니다.');
+    }).catch(function (e) {
+      btn.classList.remove('spinning');
+      if (!silent) toast('새로고침 실패: ' + e.message, true);
+    });
+  }
+
+  /* ── 이벤트 연결 ─────────────────────────────────────────── */
+
+  function initEvents() {
+    var searchTimer = null;
+    $('search').addEventListener('input', function (e) {
+      state.query = e.target.value;
+      $('searchClear').classList.toggle('hidden', !state.query);
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(renderRoster, 40);   // 입력 중 렌더 부담만 줄인다
+    });
+    $('searchClear').addEventListener('click', function () {
+      state.query = '';
+      $('search').value = '';
+      $('searchClear').classList.add('hidden');
+      renderRoster();
+    });
+
+    $('refreshBtn').addEventListener('click', function () { refresh(false); });
+
+    $('btnIn').addEventListener('click', function () { submit('등원', false); });
+    $('btnOut').addEventListener('click', function () { submit('하원', false); });
+    $('minus5').addEventListener('click', function () { adjust(-5); });
+    $('plus5').addEventListener('click', function () { adjust(5); });
+    $('minus1').addEventListener('click', function () { adjust(-1); });
+    $('plus1').addEventListener('click', function () { adjust(1); });
+    $('resetTime').addEventListener('click', function () {
+      state.customAt = null;
+      renderAdminPick();
+      updateSheetTimes();
+    });
+    $('sheetClose').addEventListener('click', closeSheet);
+    $('sheetBackdrop').addEventListener('click', closeSheet);
+
+    $('phoneSave').addEventListener('click', savePhone);
+    $('phoneCancel').addEventListener('click', closePhoneDialog);
+    $('phoneBackdrop').addEventListener('click', closePhoneDialog);
+
+    $('confirmYes').addEventListener('click', function () {
+      var fn = confirmAction;
+      closeConfirm();
+      if (fn) fn();
+    });
+    $('confirmNo').addEventListener('click', closeConfirm);
+    $('confirmBackdrop').addEventListener('click', closeConfirm);
+
+    window.addEventListener('online', flushQueue);
+
+    setInterval(function () {
+      $('clock').textContent = hhmm(nowServer());
+      renderAdminBadge();
+      if (!$('sheet').classList.contains('hidden')) updateSheetTimes();
+    }, 1000);
+
+    // 오프라인 큐를 주기적으로 재시도한다
+    setInterval(flushQueue, 60000);
+  }
+
+  initRegister();
+  initBookmark();
+  initTimePicker();
+  initAdmin();
+  initEvents();
+  boot();
+})();
+</script>
