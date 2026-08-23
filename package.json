@@ -8,10 +8,11 @@
     "which": "node scripts/target.js current",
     "targets": "node scripts/target.js list",
     "use": "node scripts/target.js use",
-    "push": "node scripts/target.js current && clasp push",
+    "push": "node scripts/check-names.js && node scripts/target.js current && clasp push",
     "pull": "node scripts/target.js current && clasp pull",
     "open": "clasp open",
-    "logs": "clasp logs --watch"
+    "logs": "clasp logs --watch",
+    "check": "node scripts/check-names.js"
   },
   "devDependencies": {
     "@google/clasp": "^2.4.2"

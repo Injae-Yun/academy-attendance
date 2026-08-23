@@ -619,12 +619,16 @@ src/
   Messaging.gs   발송 어댑터, 큐 처리, 재시도
   ProviderSolapi.gs / ProviderAligo.gs   대행사별 구현
   Triggers.gs    자동 실행 (발송 큐 · 명부 동기화 · 월 롤오버)
-  Admin.gs       관리자 화면 서버 로직 (수정·취소·재발송·수동 추가)
+  AdminApi.gs    관리자 화면 서버 로직 (수정·취소·재발송·수동 추가)
   Main.gs        커스텀 메뉴, doGet 라우팅
   Test.gs        Apps Script 안에서 실행하는 점검 함수
   App.html / AppCss.html / AppJs.html          태블릿 출결 앱
   Admin.html / AdminCss.html / AdminJs.html    관리자 화면
 ```
+
+> **파일 이름은 확장자를 뺀 상태로 유일해야 합니다.**
+> Apps Script 는 `Admin.gs` 와 `Admin.html` 을 같은 이름으로 보고 push 를 거부합니다
+> (`A file with this name already exists`). 그래서 서버 파일은 `AdminApi.gs` 입니다.
 
 좌표는 코드에 박지 않고 `probeLayout()` 이 **헤더 텍스트를 찾아 실측**합니다.
 템플릿 버전이 달라 행이 밀려도 조용히 엉뚱한 칸을 건드리지 않게 하기 위함입니다.
