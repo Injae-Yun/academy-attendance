@@ -7,6 +7,7 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('출결 관리')
     .addItem('출결 앱 열기', 'showAppUrl')
+    .addItem('관리자 화면 열기', 'showAdminUrl')
     .addSeparator()
     .addItem('명부 동기화', 'menuSyncRoster')
     .addItem('출석부 재생성', 'menuRebuildAttendbook')
@@ -210,6 +211,28 @@ function showAppUrl() {
     '현관용은 키오스크, 데스크용은 직원 모드를 선택하세요.</p></div>'
   ).setWidth(560).setHeight(240);
   SpreadsheetApp.getUi().showModalDialog(html, '출결 앱 주소');
+}
+
+/** 관리자 화면 주소를 안내한다. */
+function showAdminUrl() {
+  var url = ScriptApp.getService().getUrl();
+  if (!url) {
+    showReport_('관리자 화면',
+      '웹앱이 아직 배포되지 않았습니다.\n\n' +
+      'Apps Script 편집기 > 배포 > 새 배포 > 웹 앱 으로 배포한 뒤 다시 시도해주세요.');
+    return;
+  }
+  var adminUrl = url + (url.indexOf('?') === -1 ? '?' : '&') + 'page=admin';
+  var html = HtmlService.createHtmlOutput(
+    '<div style="font:14px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;padding:16px">' +
+    '<p style="margin:0 0 12px">아래 주소에서 기록을 수정·취소·재발송할 수 있습니다.</p>' +
+    '<p style="margin:0 0 16px"><a href="' + adminUrl + '" target="_blank">' +
+    escapeHtml_(adminUrl) + '</a></p>' +
+    '<p style="margin:0;color:#666;font-size:13px">' +
+    '기기 등록이 된 태블릿·PC 에서 열어야 하며, 관리자 PIN 을 한 번 더 입력합니다. ' +
+    '인증은 30분간 유지됩니다.</p></div>'
+  ).setWidth(620).setHeight(250);
+  SpreadsheetApp.getUi().showModalDialog(html, '관리자 화면 주소');
 }
 
 /* ── 웹앱 진입점 ─────────────────────────────────────────────────── */

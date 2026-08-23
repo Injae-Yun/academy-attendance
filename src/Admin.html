@@ -4,25 +4,195 @@
   <meta charset="utf-8">
   <title>출결 관리자</title>
   <?!= include('AppCss'); ?>
+  <?!= include('AdminCss'); ?>
+  <script>window.__BOOT__ = <?!= bootJson ?>;</script>
 </head>
 <body>
-<section class="screen" style="align-items:center; justify-content:center; padding:24px">
+
+<!-- 잠금 -->
+<section id="lock" class="screen hidden">
   <div class="card-panel">
     <h1 class="panel-title">관리자 화면</h1>
-    <p class="panel-desc">
-      기록 수정·취소·재발송 화면은 <strong>Phase 5</strong> 에서 만듭니다.
-      그때까지는 스프레드시트에서 직접 확인해주세요.
+    <p class="panel-desc" id="lockReason">
+      기록을 수정하려면 관리자 PIN 이 필요합니다.
     </p>
-
-    <div style="border-top:1px solid var(--line); padding-top:16px; margin-top:4px">
-      <p class="field-label" style="margin-bottom:10px">지금 쓸 수 있는 것</p>
-      <ul style="margin:0; padding-left:18px; font-size:14px; line-height:2; color:var(--ink-soft)">
-        <li><code>_출결_로그</code> 시트 — 출결 기록 원장</li>
-        <li><code>_출결_이력</code> 시트 — 변경 감사 로그</li>
-        <li>스프레드시트 <strong>[출결 관리]</strong> 메뉴 — 명부 동기화 · 출석부 재생성 · 정합성 점검</li>
-      </ul>
-    </div>
+    <label class="field">
+      <span class="field-label">관리자 PIN</span>
+      <input id="lockPin" type="password" inputmode="numeric" autocomplete="off"
+             placeholder="숫자 4~8자리">
+    </label>
+    <p class="form-error hidden" id="lockError"></p>
+    <button id="lockSubmit" class="primary-btn">잠금 해제</button>
   </div>
 </section>
+
+<!-- 본문 -->
+<section id="main" class="screen hidden">
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="academy" id="academyName"></span>
+      <span class="device-tag">관리자</span>
+    </div>
+    <div class="topbar-right">
+      <span class="admin-badge" id="ticketLeft"></span>
+      <button id="refreshBtn" class="icon-btn" title="새로고침">↻</button>
+    </div>
+  </header>
+
+  <div id="alerts" class="alerts"></div>
+
+  <div class="daybar">
+    <button id="prevDay" class="day-nav">◀</button>
+    <input id="dayInput" type="date">
+    <button id="nextDay" class="day-nav">▶</button>
+    <button id="todayBtn" class="day-today">오늘</button>
+    <span class="grow"></span>
+    <button id="addBtn" class="add-btn">＋ 기록 추가</button>
+  </div>
+
+  <div class="content-scroll">
+    <div id="recordList" class="record-list"></div>
+    <div id="emptyDay" class="empty hidden">이 날짜에는 기록이 없습니다.</div>
+
+    <details class="history-box">
+      <summary>최근 변경 이력</summary>
+      <div id="historyList" class="history-list"></div>
+    </details>
+  </div>
+</section>
+
+<!-- 기록 수정 -->
+<div id="editBackdrop" class="backdrop hidden"></div>
+<section id="editDialog" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-name" id="editName"></div>
+      <div class="sheet-sub" id="editSub"></div>
+    </div>
+  </div>
+
+  <div class="edit-actions">
+    <button id="actTime" class="edit-act">시각 수정</button>
+    <button id="actKind" class="edit-act">구분 변경</button>
+    <button id="actResend" class="edit-act">재발송</button>
+    <button id="actCancel" class="edit-act danger">기록 취소</button>
+  </div>
+
+  <div id="editForm" class="edit-form hidden">
+    <div id="editTimeRow" class="field hidden">
+      <span class="field-label">새 시각</span>
+      <div class="edit-time-row">
+        <input id="editDate" type="date">
+        <button id="editTimeBtn" class="time-btn">--:--</button>
+      </div>
+    </div>
+
+    <div id="editKindRow" class="field hidden">
+      <span class="field-label">바꿀 구분</span>
+      <div class="kind-choice">
+        <button type="button" class="kind-btn" data-kind="등원">등원</button>
+        <button type="button" class="kind-btn" data-kind="하원">하원</button>
+      </div>
+    </div>
+
+    <label class="field">
+      <span class="field-label" id="reasonLabel">사유 (필수)</span>
+      <input id="editReason" type="text" placeholder="예: 태블릿 시계 오차">
+    </label>
+
+    <label id="resendRow" class="notify-row hidden">
+      <input id="editResend" type="checkbox">
+      <span>보호자에게 정정 알림 보내기</span>
+    </label>
+
+    <p class="form-error hidden" id="editError"></p>
+    <button id="editSubmit" class="primary-btn">적용</button>
+  </div>
+
+  <button id="editClose" class="ghost-btn">닫기</button>
+</section>
+
+<!-- 기록 추가 -->
+<div id="addBackdrop" class="backdrop hidden"></div>
+<section id="addDialog" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-name">기록 추가</div>
+      <div class="sheet-sub">누락된 출결을 손으로 넣습니다.</div>
+    </div>
+  </div>
+
+  <label class="field">
+    <span class="field-label">학생</span>
+    <input id="addSearch" type="search" placeholder="이름 또는 초성" autocomplete="off">
+  </label>
+  <div id="addResults" class="add-results"></div>
+
+  <div id="addDetail" class="hidden">
+    <div class="picked-student" id="addPicked"></div>
+
+    <div class="field">
+      <span class="field-label">일시</span>
+      <div class="edit-time-row">
+        <input id="addDate" type="date">
+        <button id="addTimeBtn" class="time-btn">--:--</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <span class="field-label">구분</span>
+      <div class="kind-choice">
+        <button type="button" class="kind-btn on" data-kind="등원">등원</button>
+        <button type="button" class="kind-btn" data-kind="하원">하원</button>
+      </div>
+    </div>
+
+    <div id="addSubjects" class="field hidden">
+      <span class="field-label">수업 (여러 개 선택 가능)</span>
+      <div id="addSubjectChips" class="subject-chips"></div>
+    </div>
+
+    <label class="field">
+      <span class="field-label">사유 (필수)</span>
+      <input id="addReason" type="text" placeholder="예: 태블릿 고장으로 누락">
+    </label>
+
+    <label class="notify-row">
+      <input id="addNotify" type="checkbox">
+      <span>보호자에게 알림 보내기</span>
+    </label>
+
+    <p class="form-error hidden" id="addError"></p>
+    <button id="addSubmit" class="primary-btn">추가</button>
+  </div>
+
+  <button id="addClose" class="ghost-btn">닫기</button>
+</section>
+
+<!-- 시각 선택 -->
+<div id="timeBackdrop" class="backdrop hidden"></div>
+<section id="timeDialog" class="time-dialog hidden" role="dialog" aria-modal="true">
+  <div class="time-head">
+    <span class="time-title">시각 선택</span>
+    <span class="time-preview" id="timePreview">--:--</span>
+  </div>
+  <div class="wheels">
+    <div class="wheel-band"></div>
+    <div class="wheel" id="wheelHour"></div>
+    <div class="wheel-colon">:</div>
+    <div class="wheel" id="wheelMin"></div>
+  </div>
+  <p class="time-hint" id="timeHint">위아래로 굴려서 맞춘 뒤 설정을 누르세요.</p>
+  <div class="time-actions">
+    <button id="timeCancel" class="ghost-btn">취소</button>
+    <button id="timeApply" class="primary-btn">설정</button>
+  </div>
+</section>
+
+<div id="toast" class="toast hidden"></div>
+
+<?!= include('AdminJs'); ?>
 </body>
 </html>
