@@ -227,13 +227,37 @@
       </div>
     </div>
   </div>
-  <label class="field">
-    <span class="field-label">관리자 PIN</span>
-    <input id="adminPin" type="password" inputmode="numeric" autocomplete="off" placeholder="숫자 4~8자리">
-  </label>
-  <p class="form-error hidden" id="adminError"></p>
-  <button id="adminUnlock" class="primary-btn">잠금 해제</button>
-  <button id="adminCancel" class="ghost-btn">취소</button>
+  <!-- 잠겨 있을 때 -->
+  <div id="adminLocked">
+    <label class="field">
+      <span class="field-label">관리자 PIN</span>
+      <input id="adminPin" type="password" inputmode="numeric" autocomplete="off" placeholder="숫자 4~8자리">
+    </label>
+    <p class="form-error hidden" id="adminError"></p>
+    <button id="adminUnlock" class="primary-btn">잠금 해제</button>
+  </div>
+
+  <!-- 풀린 뒤 -->
+  <div id="adminUnlocked" class="hidden">
+    <div class="admin-open">
+      <button id="adminOpenConsole" class="primary-btn">관리자 화면 열기</button>
+      <p class="admin-open-desc">
+        기록을 수정·취소하거나 발송 실패 건을 다시 보냅니다. 새 탭에서 열리며
+        <b>PIN 을 다시 묻지 않습니다.</b>
+      </p>
+    </div>
+    <p class="form-error hidden" id="adminOpenError"></p>
+    <div id="adminOpenFallback" class="admin-fallback hidden">
+      <span class="field-label">주소가 자동으로 열리지 않았습니다. 복사해서 여세요.</span>
+      <div class="admin-fallback-row">
+        <input id="adminConsoleUrl" readonly>
+        <button id="adminCopyUrl" class="ghost-btn">복사</button>
+      </div>
+    </div>
+    <button id="adminLock" class="ghost-btn danger">관리자 모드 해제</button>
+  </div>
+
+  <button id="adminCancel" class="ghost-btn">닫기</button>
 </section>
 
 <!-- 확인 대화상자 -->

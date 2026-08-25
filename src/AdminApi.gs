@@ -51,6 +51,12 @@ function adminBootstrap(token, ticket) {
   }
 
   base.needsUnlock = false;
+  // 태블릿에서 티켓을 넘겨받아 들어온 경우, 남은 시간을 여기서 알려줘야
+  // 상단 카운트다운이 0 분으로 시작해 곧바로 잠기는 일이 없다.
+  //
+  // 만료 시각이 아니라 '남은 밀리초' 로 준다. 태블릿 시계가 서버와 어긋나 있어도
+  // 남은 시간은 그대로 맞다.
+  base.ticketLeftMs = Math.max(0, adminTicketUntil_(token, ticket) - now_().getTime());
   base.summary = adminSummary_();
   return base;
 }

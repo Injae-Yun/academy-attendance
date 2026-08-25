@@ -843,24 +843,75 @@
 
   /* ── 관리자 모드 ─────────────────────────────────────────── */
 
-  function openAdminDialog() {
-    if (isAdminActive()) {
-      askConfirm('관리자 모드를 해제할까요?', function () {
-        call('lockAdmin', [state.adminTicket]).catch(function () {});
-        state.adminTicket = null;
-        state.adminUntil = 0;
-        renderAdminBadge();
-        toast('관리자 모드를 해제했습니다.');
-      });
-      return;
+  /**
+   * 관리자 패널을 잠김/풀림 두 모습 중 하나로 그린다.
+   *
+   * 풀린 상태에서 톱니바퀴를 누르면 예전에는 곧바로 "해제할까요?" 를 물었다.
+   * 그러면 관리자 화면으로 갈 길이 없어서, 주소를 직접 알아야 했다.
+   */
+  function renderAdminDialog() {
+    var on = isAdminActive();
+    $('adminLocked').classList.toggle('hidden', on);
+    $('adminUnlocked').classList.toggle('hidden', !on);
+    $('adminOpenError').classList.add('hidden');
+    $('adminOpenFallback').classList.add('hidden');
+
+    if (on) {
+      var left = Math.max(0, Math.ceil((state.adminUntil - Date.now()) / 60000));
+      $('adminSub').textContent = '관리자 모드가 켜져 있습니다. ' + left + '분 남았습니다.';
+    } else {
+      $('adminPin').value = '';
+      $('adminError').classList.add('hidden');
+      $('adminSub').textContent =
+        '지난 날짜의 출결을 기록하거나 관리자 화면을 열려면 관리자 PIN 이 필요합니다. ' +
+        '해제 후 ' + (state.limits.관리자유효분 || 30) + '분간 유지됩니다.';
     }
-    $('adminPin').value = '';
-    $('adminError').classList.add('hidden');
-    $('adminSub').textContent =
-      '지난 날짜의 출결을 기록하려면 관리자 PIN 이 필요합니다. ' +
-      '해제 후 ' + (state.limits.관리자유효분 || 30) + '분간 유지됩니다.';
+  }
+
+  function openAdminDialog() {
+    renderAdminDialog();
     $('adminBackdrop').classList.remove('hidden');
     $('adminDialog').classList.remove('hidden');
+  }
+
+  /** 관리자 화면 주소. 기기 토큰과 관리자 티켓을 함께 싣는다. */
+  function adminConsoleUrl() {
+    if (!state.appUrl || !state.adminTicket) return '';
+    var sep = state.appUrl.indexOf('?') === -1 ? '?' : '&';
+    return state.appUrl + sep + 'page=admin' +
+      '&t=' + encodeURIComponent(state.token) +
+      '&a=' + encodeURIComponent(state.adminTicket);
+  }
+
+  function openAdminConsole() {
+    var url = adminConsoleUrl();
+    if (!url) {
+      var err = $('adminOpenError');
+      err.textContent = state.appUrl
+        ? '관리자 인증이 만료되었습니다. 다시 해제해주세요.'
+        : '웹앱 주소를 알 수 없습니다. 스프레드시트 메뉴의 [웹앱 주소 등록] 을 먼저 해주세요.';
+      err.classList.remove('hidden');
+      return;
+    }
+
+    // 샌드박스 iframe 안이라 팝업이 막히는 일이 있다. 그때는 주소를 보여준다.
+    var w = null;
+    try { w = window.open(url, '_blank'); } catch (e) { w = null; }
+    if (w) { closeAdminDialog(); return; }
+
+    $('adminConsoleUrl').value = url;
+    $('adminOpenFallback').classList.remove('hidden');
+  }
+
+  function doLockAdmin() {
+    askConfirm('관리자 모드를 해제할까요?', function () {
+      call('lockAdmin', [state.adminTicket]).catch(function () {});
+      state.adminTicket = null;
+      state.adminUntil = 0;
+      renderAdminBadge();
+      closeAdminDialog();
+      toast('관리자 모드를 해제했습니다.');
+    });
   }
 
   function closeAdminDialog() {
@@ -880,8 +931,9 @@
       state.adminTicket = res.ticket;
       state.adminUntil = Date.now() + res.minutes * 60000;
       $('adminPin').value = '';
-      closeAdminDialog();
       renderAdminBadge();
+      // 닫지 않는다. 방금 PIN 을 넣었으니 관리자 화면 버튼이 바로 손에 닿아야 한다.
+      renderAdminDialog();
       toast(res.message);
     }).catch(function (e) {
       $('adminUnlock').disabled = false;
@@ -982,8 +1034,17 @@
     });
     $('adminBtn').addEventListener('click', openAdminDialog);
     $('adminUnlock').addEventListener('click', doUnlock);
+    $('adminOpenConsole').addEventListener('click', openAdminConsole);
+    $('adminLock').addEventListener('click', doLockAdmin);
     $('adminCancel').addEventListener('click', closeAdminDialog);
     $('adminBackdrop').addEventListener('click', closeAdminDialog);
+    $('adminCopyUrl').addEventListener('click', function () {
+      var el = $('adminConsoleUrl');
+      el.select();
+      var done = false;
+      try { done = document.execCommand('copy'); } catch (e) { done = false; }
+      toast(done ? '주소를 복사했습니다.' : '주소를 길게 눌러 복사해주세요.');
+    });
     $('adminPin').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') doUnlock();
     });

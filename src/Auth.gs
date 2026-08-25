@@ -142,8 +142,12 @@ function unlockAdmin(token, pin) {
   }
 
   var ticket = Utilities.getUuid();
+  var until = now_().getTime() + ADMIN_TICKET_MIN * 60000;
+
+  // 만료 시각을 값에 같이 담는다. CacheService 는 남은 TTL 을 알려주지 않는데,
+  // 태블릿에서 넘겨받은 티켓으로 관리자 화면을 열 때 남은 시간을 표시해야 한다.
   CacheService.getScriptCache()
-    .put('adm|' + ticket, String(token), ADMIN_TICKET_MIN * 60);
+    .put('adm|' + ticket, String(token) + '|' + until, ADMIN_TICKET_MIN * 60);
 
   appendHistory_({
     대상기록ID: '',
@@ -159,8 +163,24 @@ function unlockAdmin(token, pin) {
     ok: true,
     ticket: ticket,
     minutes: ADMIN_TICKET_MIN,
+    until: until,
     message: ADMIN_TICKET_MIN + '분간 관리자 모드로 전환되었습니다.'
   };
+}
+
+/**
+ * 티켓 하나를 읽는다.
+ * @return {?{token: string, until: number}} 없으면 null
+ */
+function readAdminTicket_(ticket) {
+  var t = str_(ticket);
+  if (!t) return null;
+
+  var raw = CacheService.getScriptCache().get('adm|' + t);
+  if (!raw) return null;
+
+  var parts = String(raw).split('|');
+  return { token: parts[0], until: Number(parts[1]) || 0 };
 }
 
 /**
@@ -168,10 +188,19 @@ function unlockAdmin(token, pin) {
  * 티켓은 발급받은 기기에서만 쓸 수 있다.
  */
 function verifyAdminTicket_(token, ticket) {
-  var t = str_(ticket);
-  if (!t) return false;
-  var owner = CacheService.getScriptCache().get('adm|' + t);
-  return !!owner && owner === str_(token);
+  var v = readAdminTicket_(ticket);
+  if (!v) return false;
+  if (v.token !== str_(token)) return false;
+
+  // 캐시 만료를 기다리지 않고 우리가 먼저 자른다.
+  if (v.until && v.until <= now_().getTime()) return false;
+  return true;
+}
+
+/** 티켓이 언제까지 유효한가 (ms). 유효하지 않으면 0. */
+function adminTicketUntil_(token, ticket) {
+  if (!verifyAdminTicket_(token, ticket)) return 0;
+  return readAdminTicket_(ticket).until;
 }
 
 /** 관리자 모드를 즉시 해제한다. */

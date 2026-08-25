@@ -73,6 +73,10 @@
   function boot() {
     var fromUrl = (window.__BOOT__ && window.__BOOT__.token) || '';
     state.token = fromUrl || lsGet(LS.token);
+
+    // 태블릿에서 톱니바퀴로 이미 풀고 넘어왔으면 PIN 을 다시 묻지 않는다.
+    // 유효한지는 서버가 판단한다. 틀리면 needsUnlock 으로 잠금 화면이 뜬다.
+    state.ticket = (window.__BOOT__ && window.__BOOT__.adminTicket) || null;
     state.date = ymd(new Date());
 
     call('adminBootstrap', [state.token, state.ticket]).then(function (res) {
@@ -84,8 +88,9 @@
         $('lockSubmit').disabled = true;
         return;
       }
-      if (res.needsUnlock) { showLock(); return; }
+      if (res.needsUnlock) { state.ticket = null; showLock(); return; }
 
+      state.ticketUntil = Date.now() + (res.ticketLeftMs || 0);
       showMain(res.summary);
     }).catch(function (e) {
       showLock('서버에 연결하지 못했습니다: ' + e.message);

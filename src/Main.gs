@@ -402,8 +402,11 @@ function doGet(e) {
   // 주소에 ?t=토큰 을 달아 두면 그런 상황에서도 바로 복구된다.
   var appUrl = webAppUrl_().url;
 
+  // ?a=티켓 은 태블릿에서 관리자 모드를 푼 채 관리자 화면으로 건너올 때 온다.
+  // 서버가 기기·만료를 다시 검증하므로, 실려 있다고 해서 통과되는 것은 아니다.
   template.bootJson = toSafeJson_({
     token: str_(params.t),
+    adminTicket: str_(params.a),
     appUrl: appUrl
   });
 
