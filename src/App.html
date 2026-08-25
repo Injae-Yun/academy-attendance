@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>출결</title>
   <?!= include('AppCss'); ?>
+  <?!= includeOptional('Brand'); ?>
   <script>window.__BOOT__ = <?!= bootJson ?>;</script>
 </head>
 <body>
@@ -11,6 +12,7 @@
 <!-- 기기 등록 -->
 <section id="register" class="screen hidden">
   <div class="card-panel">
+    <span class="panel-mark"></span>
     <h1 class="panel-title">기기 등록</h1>
     <p class="panel-desc" id="registerReason">
       이 태블릿을 출결 시스템에 등록합니다. 관리자 PIN 이 필요합니다.
@@ -64,6 +66,7 @@
 <section id="main" class="screen hidden">
   <header class="topbar">
     <div class="topbar-left">
+      <span class="brand-mark"></span>
       <span class="academy" id="academyName"></span>
       <span class="device-tag" id="deviceTag"></span>
     </div>

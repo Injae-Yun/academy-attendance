@@ -4,3 +4,6 @@ node_modules/
 *.log
 .DS_Store
 .omc/
+
+# 학원 로고는 저장소에 올리지 않는다 (clasp 은 .claspignore 규칙으로 push 한다)
+src/Brand.html

@@ -5,6 +5,7 @@
   <title>출결 관리자</title>
   <?!= include('AppCss'); ?>
   <?!= include('AdminCss'); ?>
+  <?!= includeOptional('Brand'); ?>
   <script>window.__BOOT__ = <?!= bootJson ?>;</script>
 </head>
 <body>
@@ -12,6 +13,7 @@
 <!-- 잠금 -->
 <section id="lock" class="screen hidden">
   <div class="card-panel">
+    <span class="panel-mark"></span>
     <h1 class="panel-title">관리자 화면</h1>
     <p class="panel-desc" id="lockReason">
       기록을 수정하려면 관리자 PIN 이 필요합니다.
@@ -30,6 +32,7 @@
 <section id="main" class="screen hidden">
   <header class="topbar">
     <div class="topbar-left">
+      <span class="brand-mark"></span>
       <span class="academy" id="academyName"></span>
       <span class="device-tag">관리자</span>
     </div>

@@ -280,3 +280,17 @@ function toSafeJson_(obj) {
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
+
+/**
+ * 있으면 끼워 넣고 없으면 조용히 넘어간다.
+ *
+ * 학원 로고(Brand.html)는 저장소에 올리지 않으므로, 코드만 받아 간 환경에는
+ * 그 파일이 없다. 그때 화면이 통째로 죽으면 안 된다.
+ */
+function includeOptional(filename) {
+  try {
+    return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  } catch (e) {
+    return '';
+  }
+}
