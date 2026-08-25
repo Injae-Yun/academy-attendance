@@ -485,6 +485,33 @@ function initializeAppSheets() {
  *
  * @return {string[]} 새로 추가한 키 목록
  */
+/**
+ * 설정 한 칸을 쓴다. 키가 없으면 새 행을 만든다.
+ *
+ * ensureSettingKeys_ 는 최초 설치 때만 도는데, 웹앱 주소처럼 나중에
+ * 등록하는 값은 그때 시트에 행이 없을 수 있다. 그래서 upsert 로 둔다.
+ */
+function writeSetting_(key, value) {
+  var sh = sheet_(APP_SHEET.설정, true);
+  if (!sh) throw new Error('_출결_설정 시트가 없습니다. [최초 설치] 를 먼저 실행해주세요.');
+
+  var row = 0;
+  if (sh.getLastRow() > 1) {
+    var keys = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+    for (var i = 0; i < keys.length; i++) {
+      if (String(keys[i][0]).trim() === key) { row = i + 2; break; }
+    }
+  }
+
+  if (row) {
+    sh.getRange(row, 2).setValue(value);
+  } else {
+    var desc = SETTING_DEFAULTS[key] ? SETTING_DEFAULTS[key][1] : '';
+    appendRows_(sh, [[key, value, desc]]);
+  }
+  clearSettingsCache_();
+}
+
 function ensureSettingKeys_() {
   var sh = sheet_(APP_SHEET.설정, true);
   if (!sh) return [];

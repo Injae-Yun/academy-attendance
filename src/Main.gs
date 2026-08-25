@@ -8,6 +8,7 @@ function onOpen() {
   ui.createMenu('출결 관리')
     .addItem('출결 앱 열기', 'showAppUrl')
     .addItem('관리자 화면 열기', 'showAdminUrl')
+    .addItem('웹앱 주소 등록', 'menuSetWebAppUrl')
     .addSeparator()
     .addItem('명부 동기화', 'menuSyncRoster')
     .addItem('출석부 재생성', 'menuRebuildAttendbook')
@@ -193,46 +194,191 @@ function menuUninstallTriggers() {
   showReport_('자동 실행', uninstallTriggers());
 }
 
-/** 배포된 웹앱 주소를 안내한다. */
-function showAppUrl() {
-  var url = ScriptApp.getService().getUrl();
-  if (!url) {
-    showReport_('출결 앱',
-      '웹앱이 아직 배포되지 않았습니다.\n\n' +
-      'Apps Script 편집기 > 배포 > 새 배포 > 웹 앱 으로 배포한 뒤 다시 시도해주세요.');
-    return;
-  }
+/**
+ * 웹앱 주소를 알아낸다.
+ *
+ * ScriptApp.getService().getUrl() 을 그대로 쓰면 안 된다. 메뉴처럼 편집기 쪽에서
+ * 부르면 배포 주소(/exec)가 아니라 개발 주소(/dev)를 돌려준다. /dev 는 스크립트
+ * 편집 권한이 있는 계정에서만 열려서, 태블릿에서는 물론이고 구글 계정이 여러 개
+ * 로그인돼 있으면 본인 PC 에서도 열리지 않는다.
+ *
+ * 그래서 배포 주소를 _출결_설정에 적어두고 그 값을 우선한다.
+ *
+ * @return {{url: string, source: string}} source 는 setting | dev | exec | none
+ */
+function webAppUrl_() {
+  var saved = String(setting_('웹앱주소', '') || '').trim();
+  if (saved) return { url: saved, source: 'setting' };
+
+  var url = '';
+  try { url = ScriptApp.getService().getUrl() || ''; } catch (err) { url = ''; }
+  if (!url) return { url: '', source: 'none' };
+  return { url: url, source: /\/dev\/?$/.test(url) ? 'dev' : 'exec' };
+}
+
+/** 주소 뒤에 쿼리를 하나 붙인다. */
+function withParam_(url, kv) {
+  return url + (url.indexOf('?') === -1 ? '?' : '&') + kv;
+}
+
+/** /dev 주소밖에 없을 때 띄울 경고 */
+var DEV_URL_WARN =
+  '<b>이 주소는 태블릿에서 열리지 않습니다.</b> 배포 주소를 등록하지 않아 ' +
+  '편집자 전용 개발 주소(<code>/dev</code>)를 보여주고 있습니다. ' +
+  '메뉴의 <b>[웹앱 주소 등록]</b> 에 <code>/exec</code> 주소를 넣어주세요.';
+
+/**
+ * 주소를 띄운다. 링크와 함께 복사할 수 있는 입력칸을 준다.
+ *
+ * 모달 안의 링크는 팝업 차단에 걸리는 일이 잦다. 주소가 눈에 보이고 복사되면
+ * 그런 경우에도 막히지 않는다.
+ */
+function showUrlDialog_(title, intro, url, note, warn) {
+  var esc = escapeHtml_(url);
   var html = HtmlService.createHtmlOutput(
-    '<div style="font:14px/1.7 -apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;padding:16px">' +
-    '<p style="margin:0 0 12px">태블릿에서 아래 주소를 열어주세요.</p>' +
-    '<p style="margin:0 0 16px"><a href="' + url + '" target="_blank">' + escapeHtml_(url) + '</a></p>' +
-    '<p style="margin:0;color:#666;font-size:13px">' +
+    '<div style="font:14px/1.7 system-ui,-apple-system,sans-serif;padding:16px">' +
+    (warn
+      ? '<p style="margin:0 0 14px;padding:10px 12px;background:#fff4e5;' +
+        'border-left:3px solid #f5a623;border-radius:4px;color:#8a5a00">' + warn + '</p>'
+      : '') +
+    '<p style="margin:0 0 10px">' + intro + '</p>' +
+    '<div style="display:flex;gap:6px;margin:0 0 12px">' +
+    '<input id="u" readonly value="' + esc + '" style="flex:1;min-width:0;padding:8px 10px;' +
+    'font:13px ui-monospace,Consolas,monospace;border:1px solid #ccc;border-radius:6px">' +
+    '<button id="c" style="padding:8px 14px;border:0;border-radius:6px;background:#1a73e8;' +
+    'color:#fff;font-size:13px;cursor:pointer">복사</button></div>' +
+    '<p style="margin:0 0 14px"><a href="' + esc + '" target="_blank" rel="noopener">새 탭에서 열기</a></p>' +
+    '<p style="margin:0;color:#666;font-size:13px">' + note + '</p>' +
+    '<script>' +
+    'var i=document.getElementById("u"),b=document.getElementById("c");' +
+    'i.onclick=function(){i.select();};' +
+    'b.onclick=function(){i.select();' +
+    'try{document.execCommand("copy");b.textContent="복사됨";}' +
+    'catch(e){b.textContent="Ctrl+C 로 복사";}' +
+    'setTimeout(function(){b.textContent="복사";},1600);};' +
+    'i.focus();i.select();' +
+    '<\/script></div>'
+  ).setWidth(640).setHeight(warn ? 350 : 280);
+  SpreadsheetApp.getUi().showModalDialog(html, title);
+}
+
+/** 주소를 전혀 모를 때 안내한다. */
+function showNoUrl_(title) {
+  showReport_(title, [
+    '웹앱 주소를 알 수 없습니다.',
+    '',
+    '1. Apps Script 편집기 > 배포 > 배포 관리 에서 웹 앱 URL 을 복사하세요',
+    '   (…/exec 로 끝나는 주소입니다)',
+    '2. 메뉴 [출결 관리] > 웹앱 주소 등록 에 붙여넣으세요',
+    '',
+    '아직 배포한 적이 없다면 배포 > 새 배포 > 웹 앱 으로 먼저 배포해주세요.'
+  ].join('\n'));
+}
+
+/** 출결 앱 주소를 안내한다. */
+function showAppUrl() {
+  var w = webAppUrl_();
+  if (!w.url) { showNoUrl_('출결 앱'); return; }
+
+  showUrlDialog_(
+    '출결 앱 주소',
+    '태블릿 브라우저에서 아래 주소를 열어주세요.',
+    w.url,
     '처음 열면 기기 등록 화면이 나옵니다. 관리자 PIN 을 입력한 뒤 ' +
-    '현관용은 키오스크, 데스크용은 직원 모드를 선택하세요.</p></div>'
-  ).setWidth(560).setHeight(240);
-  SpreadsheetApp.getUi().showModalDialog(html, '출결 앱 주소');
+    '현관용은 키오스크, 데스크용은 직원 모드를 선택하세요.',
+    w.source === 'dev' ? DEV_URL_WARN : ''
+  );
 }
 
 /** 관리자 화면 주소를 안내한다. */
 function showAdminUrl() {
-  var url = ScriptApp.getService().getUrl();
+  var w = webAppUrl_();
+  if (!w.url) { showNoUrl_('관리자 화면'); return; }
+
+  showUrlDialog_(
+    '관리자 화면 주소',
+    '기록을 수정·취소·재발송하는 화면입니다. ' +
+    '출결 앱 주소 뒤에 <code>?page=admin</code> 을 붙인 것입니다.',
+    withParam_(w.url, 'page=admin'),
+    '기기 등록이 된 태블릿·PC 에서 열어야 하며, 관리자 PIN 을 한 번 더 입력합니다. ' +
+    '인증은 30분간 유지됩니다.',
+    w.source === 'dev' ? DEV_URL_WARN : ''
+  );
+}
+
+/** 배포 주소를 설정에 등록한다. */
+function menuSetWebAppUrl() {
+  var ui = SpreadsheetApp.getUi();
+  var cur = String(setting_('웹앱주소', '') || '').trim();
+
+  var res = ui.prompt(
+    '웹앱 주소 등록',
+    [
+      'Apps Script 편집기 > 배포 > 배포 관리 에서 복사한 웹 앱 URL 을 붙여넣으세요.',
+      '…/exec 로 끝나는 주소입니다.',
+      '',
+      cur ? '지금 등록된 주소:\n' + cur : '아직 등록된 주소가 없습니다.'
+    ].join('\n'),
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+
+  var url = String(res.getResponseText() || '').trim();
   if (!url) {
-    showReport_('관리자 화면',
-      '웹앱이 아직 배포되지 않았습니다.\n\n' +
-      'Apps Script 편집기 > 배포 > 새 배포 > 웹 앱 으로 배포한 뒤 다시 시도해주세요.');
+    writeSetting_('웹앱주소', '');
+    showReport_('웹앱 주소 등록', '등록된 주소를 지웠습니다.');
     return;
   }
-  var adminUrl = url + (url.indexOf('?') === -1 ? '?' : '&') + 'page=admin';
-  var html = HtmlService.createHtmlOutput(
-    '<div style="font:14px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;padding:16px">' +
-    '<p style="margin:0 0 12px">아래 주소에서 기록을 수정·취소·재발송할 수 있습니다.</p>' +
-    '<p style="margin:0 0 16px"><a href="' + adminUrl + '" target="_blank">' +
-    escapeHtml_(adminUrl) + '</a></p>' +
-    '<p style="margin:0;color:#666;font-size:13px">' +
-    '기기 등록이 된 태블릿·PC 에서 열어야 하며, 관리자 PIN 을 한 번 더 입력합니다. ' +
-    '인증은 30분간 유지됩니다.</p></div>'
-  ).setWidth(620).setHeight(250);
-  SpreadsheetApp.getUi().showModalDialog(html, '관리자 화면 주소');
+
+  // 쿼리는 우리가 붙이므로 떼어낸다 (?page=admin 이 딸려 오는 일이 잦다).
+  url = url.split('#')[0].split('?')[0].replace(/\/+$/, '');
+
+  if (url.indexOf('https://') !== 0 || url.indexOf('/macros/') === -1) {
+    showReport_('웹앱 주소 등록', [
+      '웹 앱 주소로 보이지 않습니다:',
+      url,
+      '',
+      '이런 모양이어야 합니다:',
+      'https://script.google.com/macros/s/AKfycb.../exec'
+    ].join('\n'));
+    return;
+  }
+
+  if (/\/dev$/.test(url)) {
+    showReport_('웹앱 주소 등록', [
+      '개발용 주소(/dev)는 등록할 수 없습니다.',
+      '',
+      '/dev 는 스크립트 편집 권한이 있는 계정에서만 열립니다.',
+      '태블릿에서는 열리지 않고, 구글 계정이 여러 개 로그인돼 있으면',
+      '본인 PC 에서도 열리지 않습니다.',
+      '',
+      '배포 > 배포 관리 에서 /exec 로 끝나는 주소를 복사해주세요.'
+    ].join('\n'));
+    return;
+  }
+
+  if (!/\/exec$/.test(url)) {
+    showReport_('웹앱 주소 등록', [
+      '주소가 /exec 로 끝나지 않습니다:',
+      url,
+      '',
+      '배포 > 배포 관리 에서 웹 앱 URL 을 다시 복사해주세요.'
+    ].join('\n'));
+    return;
+  }
+
+  writeSetting_('웹앱주소', url);
+  showReport_('웹앱 주소 등록', [
+    '등록했습니다.',
+    '',
+    '출결 앱      ' + url,
+    '관리자 화면   ' + url + '?page=admin',
+    '',
+    '이제 메뉴의 [출결 앱 열기] · [관리자 화면 열기] 가 이 주소를 안내합니다.',
+    '',
+    '※ "새 배포" 로 다시 배포하면 주소가 바뀌니 그때는 여기서 다시 등록해주세요.',
+    '   "배포 관리 → 연필 → 새 버전" 으로 올리면 주소는 그대로입니다.'
+  ].join('\n'));
 }
 
 /* ── 웹앱 진입점 ─────────────────────────────────────────────────── */
@@ -254,8 +400,7 @@ function doGet(e) {
   // 띄우는데 그 주소가 바뀔 수 있다. 그러면 localStorage 에 둔 토큰이 날아가
   // 태블릿이 현관에서 다시 등록을 요구한다.
   // 주소에 ?t=토큰 을 달아 두면 그런 상황에서도 바로 복구된다.
-  var appUrl = '';
-  try { appUrl = ScriptApp.getService().getUrl() || ''; } catch (err) { appUrl = ''; }
+  var appUrl = webAppUrl_().url;
 
   template.bootJson = toSafeJson_({
     token: str_(params.t),

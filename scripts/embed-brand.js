@@ -10,6 +10,7 @@
  *
  * 사용법:
  *   npm run brand -- "C:/경로/로고.png"
+ *   npm run brand -- "C:/경로/로고.png" --opacity 0.2   배경 로고를 더 진하게
  *   npm run brand -- --remove          로고를 걷어낸다
  */
 'use strict';
@@ -39,7 +40,30 @@ const MIME = {
 /** Apps Script 파일 하나가 지나치게 커지면 편집기가 버거워진다. */
 const WARN_KB = 250;
 
-const arg = process.argv[2];
+/** 배경 워터마크 기본 농도. 글자를 읽는 데 방해되지 않으면서 로고가 보이는 선. */
+const DEFAULT_OPACITY = 0.25;
+
+const argv = process.argv.slice(2);
+
+/** --opacity 0.2 를 뽑아낸다. 나머지가 이미지 경로다. */
+function takeOpacity(list) {
+  const i = list.indexOf('--opacity');
+  if (i === -1) return DEFAULT_OPACITY;
+
+  const raw = list[i + 1];
+  list.splice(i, raw === undefined ? 1 : 2);
+
+  const n = Number(raw);
+  if (!isFinite(n) || n <= 0 || n > 1) {
+    console.log(C.red('  --opacity 는 0 보다 크고 1 이하인 숫자여야 합니다: ' + raw));
+    console.log(C.dim('  예) --opacity 0.2   (0.05 = 거의 안 보임, 0.3 = 꽤 진함)'));
+    process.exit(1);
+  }
+  return n;
+}
+
+const opacity = takeOpacity(argv);
+const arg = argv[0];
 
 if (arg === '--remove') {
   if (fs.existsSync(OUT)) {
@@ -111,12 +135,12 @@ const css = `<!--
   background: var(--brand-mark) center / contain no-repeat;
 }
 
-/* 배경 워터마크.
-   글자를 가리면 안 되므로 아주 옅게, 한 장만, 가운데에 둔다. */
+/* 배경 워터마크. 한 장만, 가운데에 옅게 둔다.
+   진하기는 npm run brand -- <파일> --opacity 0.2 로 바꿀 수 있다. */
 body::before {
   content: ''; position: fixed; inset: 0; z-index: 0;
-  background: var(--brand-mark) center center / min(46vmin, 380px) no-repeat;
-  opacity: .05;
+  background: var(--brand-mark) center center / min(52vmin, 440px) no-repeat;
+  opacity: ${opacity};
   pointer-events: none;
 }
 
@@ -132,6 +156,7 @@ console.log('');
 console.log(C.green('  로고를 심었습니다.'));
 console.log('    원본   ' + src);
 console.log('    출력   src/Brand.html  (' + kb + ' KB)');
+console.log('    배경   진하기 ' + opacity + C.dim('  (--opacity 로 조절)'));
 console.log('');
 console.log(C.dim('    · git 에는 올라가지 않습니다 (.gitignore)'));
 console.log(C.dim('    · clasp push 로는 함께 올라갑니다 (.claspignore)'));

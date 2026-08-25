@@ -166,10 +166,17 @@ button { cursor: pointer; border: none; background: none; }
   flex: 1; overflow-y: auto; padding: 4px 8px 24px 16px;
   -webkit-overflow-scrolling: touch;
 }
+/* 초성 머리글.
+   폭을 글자에 맞춘다. 화면 폭을 채우면 불투명한 띠가 되어
+   배경 로고를 가로로 잘라먹는다. */
 .group-head {
   position: sticky; top: 0; z-index: 1;
-  margin: 12px 0 6px; padding: 4px 6px;
-  background: var(--bg); color: var(--ink-soft);
+  width: fit-content;
+  margin: 12px 0 6px; padding: 4px 12px;
+  border-radius: 12px;
+  background: rgba(244, 245, 247, .88);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  color: var(--ink-soft);
   font-size: 13px; font-weight: 700;
 }
 .group-grid {
