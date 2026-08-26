@@ -8,6 +8,7 @@ function onOpen() {
   ui.createMenu('출결 관리')
     .addItem('출결 앱 열기', 'showAppUrl')
     .addItem('관리자 화면 열기', 'showAdminUrl')
+    .addItem('기기 등록 링크', 'showRegisterUrl')
     .addItem('웹앱 주소 등록', 'menuSetWebAppUrl')
     .addSeparator()
     .addItem('명부 동기화', 'menuSyncRoster')
@@ -286,6 +287,31 @@ function showAdminUrl() {
   );
 }
 
+/**
+ * 태블릿을 새로 등록할 때 쓰는 시한부 링크를 만든다.
+ *
+ * 평소에는 등록 화면이 아예 뜨지 않는다. 수신거부 버튼 때문에 웹앱 주소가
+ * 보호자 휴대폰마다 들어가는데, 뒤를 잘라내면 관리자 PIN 입력창이 나오는
+ * 상태로 둘 수는 없다.
+ */
+function showRegisterUrl() {
+  var w = webAppUrl_();
+  if (!w.url) { showNoUrl_('기기 등록 링크'); return; }
+
+  var url = withParam_(w.url, 'r=' + encodeURIComponent(makeRegisterTicket_()));
+
+  showUrlDialog_(
+    '기기 등록 링크',
+    '등록할 태블릿에서 아래 주소를 열어주세요. ' +
+    '<b>' + REGISTER_LINK_MIN + '분간</b> 유효합니다.',
+    url,
+    '이 링크로 들어온 화면에서만 기기를 등록할 수 있고, 관리자 PIN 을 함께 ' +
+    '입력해야 합니다. 등록이 끝나면 태블릿에 나오는 즐겨찾기 주소를 저장하세요. ' +
+    '그 뒤로는 이 링크가 없어도 됩니다.',
+    w.source === 'dev' ? DEV_URL_WARN : ''
+  );
+}
+
 /** 배포 주소를 설정에 등록한다. */
 function menuSetWebAppUrl() {
   var ui = SpreadsheetApp.getUi();
@@ -397,9 +423,17 @@ function doGet(e) {
 
   // ?a=티켓 은 태블릿에서 관리자 모드를 푼 채 관리자 화면으로 건너올 때 온다.
   // 서버가 기기·만료를 다시 검증하므로, 실려 있다고 해서 통과되는 것은 아니다.
+  // 등록 화면은 시한부 링크로 들어온 사람에게만 보인다.
+  // 그러지 않으면 수신거부 버튼으로 주소를 받은 보호자가 뒤를 잘라내
+  // 관리자 PIN 입력창을 마주하게 된다.
+  var regTicket = str_(params.r);
+  var canRegister = verifyRegisterTicket_(regTicket);
+
   template.bootJson = toSafeJson_({
     token: str_(params.t),
     adminTicket: str_(params.a),
+    regTicket: canRegister ? regTicket : '',
+    canRegister: canRegister,
     appUrl: appUrl
   });
 

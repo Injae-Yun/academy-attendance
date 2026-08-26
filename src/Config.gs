@@ -246,7 +246,8 @@ var SECRET_KEY = {
   aligoApiKey: 'ALIGO_API_KEY',
   aligoUserId: 'ALIGO_USER_ID',
   adminPinSalt: 'ADMIN_PIN_SALT',
-  optoutSalt: 'OPTOUT_SALT'
+  optoutSalt: 'OPTOUT_SALT',
+  registerSalt: 'REGISTER_SALT'
 };
 
 var LAYOUT_PROP_KEY = 'PROBED_LAYOUT';

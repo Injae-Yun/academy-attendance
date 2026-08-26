@@ -35,6 +35,8 @@
     adminUntil: 0,         // 티켓 만료 시각(ms)
     serverSkewMs: 0,       // 서버 - 태블릿 시계 차이
     appUrl: '',
+    regTicket: '',      // 시한부 기기 등록 링크에 실려 온 값
+    canRegister: false,
     queue: []
   };
 
@@ -148,14 +150,30 @@
 
   /* ── 화면 전환 ───────────────────────────────────────────── */
 
+  /**
+   * 등록 화면은 시한부 등록 링크로 들어온 경우에만 보여준다.
+   *
+   * 링크가 없으면 PIN 입력창조차 내보내지 않는다. 웹앱 주소는 수신거부
+   * 버튼을 타고 보호자 휴대폰마다 들어가는데, 뒤를 잘라내면 관리자 PIN
+   * 입력창이 나오는 상태로 둘 수는 없다.
+   */
   function showRegister(reason) {
     $('main').classList.add('hidden');
+
+    if (!state.canRegister) {
+      $('register').classList.add('hidden');
+      $('blocked').classList.remove('hidden');
+      if (reason) $('blockedReason').textContent = reason;
+      return;
+    }
+    $('blocked').classList.add('hidden');
     $('register').classList.remove('hidden');
     if (reason) $('registerReason').textContent = reason;
   }
 
   function showMain() {
     $('register').classList.add('hidden');
+    $('blocked').classList.add('hidden');
     $('main').classList.remove('hidden');
   }
 
@@ -167,6 +185,8 @@
     // 통째로 사라질 때가 있는데, 그때도 즐겨찾기 주소만으로 복구된다.
     var fromUrl = (window.__BOOT__ && window.__BOOT__.token) || '';
     state.appUrl = (window.__BOOT__ && window.__BOOT__.appUrl) || '';
+    state.regTicket = (window.__BOOT__ && window.__BOOT__.regTicket) || '';
+    state.canRegister = !!(window.__BOOT__ && window.__BOOT__.canRegister);
     state.token = fromUrl || lsGet(LS.token, null);
     if (fromUrl) lsSet(LS.token, fromUrl);
     state.queue = lsGet(LS.queue, []);
@@ -244,7 +264,7 @@
       $('regSubmit').disabled = true;
       $('regSubmit').textContent = '등록 중…';
 
-      call('registerDevice', [pin, label, chosenMode]).then(function (res) {
+      call('registerDevice', [pin, label, chosenMode, state.regTicket]).then(function (res) {
         $('regSubmit').disabled = false;
         $('regSubmit').textContent = '등록하기';
         if (!res.ok) { err.textContent = res.message; err.classList.remove('hidden'); return; }

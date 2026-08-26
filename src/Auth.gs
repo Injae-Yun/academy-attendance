@@ -53,19 +53,41 @@ function verifyDevice_(token) {
  * @param {string} mode 'kiosk' 또는 'staff'
  * @return {{ok: boolean, token: string, mode: string, message: string}}
  */
-function registerDevice(pin, label, mode) {
+function registerDevice(pin, label, mode, regTicket) {
   applyProbedLayout_();
 
   var name = str_(label) || '이름 없는 기기';
   var m = (mode === MODE.직원) ? MODE.직원 : MODE.키오스크;
 
+  // 등록 링크 없이는 PIN 이 맞아도 등록되지 않는다.
+  // 화면에서 막는 것만으로는 부족하다 — google.script.run 은 직접 부를 수 있다.
+  if (!verifyRegisterTicket_(regTicket)) {
+    return {
+      ok: false, token: '', mode: '', needsLink: true,
+      message: '등록 링크가 없거나 만료되었습니다. 스프레드시트 메뉴 ' +
+        '[출결 관리] > 기기 등록 링크 에서 새로 만들어주세요.'
+    };
+  }
+
+  var guard = pinGuard_('register');
+  if (guard.locked) {
+    return { ok: false, token: '', mode: '', locked: true, message: pinLockedMessage_() };
+  }
+
   try {
     if (!verifyAdminPin_(pin)) {
-      return { ok: false, token: '', mode: '', message: '관리자 PIN 이 올바르지 않습니다.' };
+      var left = guard.fail();
+      return {
+        ok: false, token: '', mode: '',
+        message: '관리자 PIN 이 올바르지 않습니다.' +
+          (left > 0 ? ' (' + left + '번 더 틀리면 ' + PIN_LOCK_MIN + '분간 잠깁니다)'
+                    : ' ' + pinLockedMessage_())
+      };
     }
   } catch (e) {
     return { ok: false, token: '', mode: '', message: e.message };
   }
+  guard.clear();
 
   return withLock_(function () {
     var token = Utilities.getUuid();
@@ -103,6 +125,109 @@ function requireDevice_(token) {
   return d;
 }
 
+/* ── 기기 등록 링크 ───────────────────────────────────────────────── */
+
+/**
+ * 등록 링크 유효 시간(분). 태블릿 한 대 등록하는 데 30분이면 넉넉하다.
+ */
+var REGISTER_LINK_MIN = 30;
+
+/**
+ * 왜 링크를 따로 만드나.
+ *
+ * 웹앱은 "모든 사용자" 로 열려 있고, 수신거부 버튼을 달면 그 주소가 보호자
+ * 휴대폰마다 들어간다. 뒤를 잘라내면 예전에는 기기 등록 화면 — 곧 관리자 PIN
+ * 입력창 — 이 그대로 나왔다. PIN 을 아무리 길게 잡아도 입구가 열려 있는 건
+ * 그대로다.
+ *
+ * 등록은 학원이 태블릿을 새로 놓을 때만 하는 일이다. 그때만 스프레드시트
+ * 메뉴에서 시한부 링크를 만들고, 그 링크로 들어온 사람에게만 등록 화면을
+ * 보여준다. 그 밖에는 화면 자체가 없다.
+ *
+ * 스프레드시트 메뉴는 구글 계정으로 이미 보호되므로, 링크를 만들 수 있는
+ * 사람은 파일 편집 권한이 있는 사람뿐이다.
+ */
+function registerSalt_() {
+  var props = PropertiesService.getScriptProperties();
+  var salt = props.getProperty(SECRET_KEY.registerSalt);
+  if (!salt) {
+    salt = Utilities.getUuid();
+    props.setProperty(SECRET_KEY.registerSalt, salt);
+  }
+  return salt;
+}
+
+function registerSig_(until) {
+  var raw = Utilities.computeHmacSha256Signature(String(until), registerSalt_());
+  return raw.map(function (b) {
+    var v = (b < 0 ? b + 256 : b).toString(16);
+    return v.length === 1 ? '0' + v : v;
+  }).join('').slice(0, 16);
+}
+
+/** '1790000000000.9f3c…' 모양. 만료 시각이 값에 들어 있어 저장할 게 없다. */
+function makeRegisterTicket_() {
+  var until = now_().getTime() + REGISTER_LINK_MIN * 60000;
+  return until + '.' + registerSig_(until);
+}
+
+/** 등록 링크가 아직 살아 있고 위조되지 않았는가. */
+function verifyRegisterTicket_(ticket) {
+  var s = str_(ticket);
+  var i = s.indexOf('.');
+  if (i <= 0) return false;
+
+  var until = Number(s.slice(0, i));
+  if (!until || until <= now_().getTime()) return false;
+  return s.slice(i + 1) === registerSig_(until);
+}
+
+/* ── PIN 시도 제한 ────────────────────────────────────────────────── */
+
+/**
+ * PIN 을 틀릴 수 있는 횟수와 잠기는 시간.
+ *
+ * 웹앱 주소는 "모든 사용자" 로 열려 있고, 수신거부 버튼을 달면 그 주소가
+ * 보호자 휴대폰마다 들어간다. 뒤를 잘라내면 PIN 입력창이 나오므로,
+ * 막지 않으면 네 자리 PIN 은 브라우저 콘솔로 몇 분이면 뚫린다.
+ *
+ * 학원 사람이 다섯 번 연달아 틀릴 일은 드물고, 10분은 기다릴 만하다.
+ */
+var PIN_MAX_TRIES = 5;
+var PIN_LOCK_MIN = 10;
+
+/**
+ * 시도 횟수를 센다.
+ *
+ * 카카오와 달리 우리는 접속자를 구분할 수 없어(웹앱은 IP 도 주지 않는다)
+ * 용도별로 하나씩만 센다. 잠기면 학원 사람도 10분 기다려야 하지만,
+ * 명부 전체가 넘어가는 것보다는 낫다.
+ *
+ * @param {string} scope 'register' | 'unlock'
+ */
+function pinGuard_(scope) {
+  var cache = CacheService.getScriptCache();
+  var key = 'pinfail|' + scope;
+  var n = Number(cache.get(key) || 0);
+
+  return {
+    locked: n >= PIN_MAX_TRIES,
+    left: Math.max(0, PIN_MAX_TRIES - n),
+    /** 틀렸다. 실패할 때마다 잠금 시간이 다시 10분으로 늘어난다. */
+    fail: function () {
+      cache.put(key, String(n + 1), PIN_LOCK_MIN * 60);
+      return Math.max(0, PIN_MAX_TRIES - (n + 1));
+    },
+    clear: function () { cache.remove(key); }
+  };
+}
+
+/** 잠겼을 때 보여줄 말. 남은 횟수는 알려주되 왜 잠겼는지도 알려준다. */
+function pinLockedMessage_() {
+  return 'PIN 을 여러 번 틀려 ' + PIN_LOCK_MIN + '분간 잠겼습니다. ' +
+    '잠시 후 다시 시도해주세요.';
+}
+
 /* ── 관리자 잠금 해제 ─────────────────────────────────────────────── */
 
 /**
@@ -133,13 +258,25 @@ function unlockAdmin(token, pin) {
     return { ok: false, needsRegister: true, message: e.message };
   }
 
+  var guard = pinGuard_('unlock');
+  if (guard.locked) {
+    return { ok: false, locked: true, message: pinLockedMessage_() };
+  }
+
   try {
     if (!verifyAdminPin_(pin)) {
-      return { ok: false, message: '관리자 PIN 이 올바르지 않습니다.' };
+      var left = guard.fail();
+      return {
+        ok: false,
+        message: '관리자 PIN 이 올바르지 않습니다.' +
+          (left > 0 ? ' (' + left + '번 더 틀리면 ' + PIN_LOCK_MIN + '분간 잠깁니다)'
+                    : ' ' + pinLockedMessage_())
+      };
     }
   } catch (e) {
     return { ok: false, message: e.message };
   }
+  guard.clear();
 
   var ticket = Utilities.getUuid();
   var until = now_().getTime() + ADMIN_TICKET_MIN * 60000;

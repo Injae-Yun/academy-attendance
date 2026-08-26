@@ -9,6 +9,23 @@
 </head>
 <body>
 
+<!-- 등록 링크 없이 들어온 경우.
+     웹앱 주소는 수신거부 버튼을 타고 보호자 휴대폰마다 들어간다.
+     뒤를 잘라내고 들어와도 여기서 끝나야 하고, PIN 입력창이 보여선 안 된다. -->
+<section id="blocked" class="screen hidden">
+  <div class="card-panel">
+    <span class="panel-mark"></span>
+    <h1 class="panel-title">등록된 기기가 아닙니다</h1>
+    <p class="panel-desc" id="blockedReason">
+      이 주소는 학원에 등록된 태블릿에서만 열립니다.
+    </p>
+    <p class="panel-desc">
+      출결 알림 수신 설정을 바꾸시려면 받으신 알림 메시지 하단의
+      <b>[출결 알림 받지 않기]</b> 버튼을 눌러주세요.
+    </p>
+  </div>
+</section>
+
 <!-- 기기 등록 -->
 <section id="register" class="screen hidden">
   <div class="card-panel">
