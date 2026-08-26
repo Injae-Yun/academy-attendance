@@ -55,7 +55,7 @@ function TestProvider_() {
  *
  * @return {{text, vars, bytes, fits, shortened}}
  */
-function buildMessage_(academy, name, kind, at) {
+function buildMessage_(academy, name, kind, at, studentId) {
   var template = messageTemplate_();
   var word = KIND_WORD[kind] || KIND_WORD[KIND.등원];
 
@@ -68,7 +68,9 @@ function buildMessage_(academy, name, kind, at) {
       '#{날짜}': fmtDotDate_(at),
       '#{시간}': fmtTime_(at),
       '#{등하원조건}': word,
-      '#{이모티콘}': emoji
+      '#{이모티콘}': emoji,
+      // 알림톡 버튼 링크에 실린다. 이 값 하나로 어느 학생인지 가린다.
+      '#{수신거부키}': studentId ? optoutKey_(studentId) : ''
     };
     // 예전 이름으로 저장된 문구가 시트에 남아 있을 수 있다.
     // 조용히 '#{일자}' 글자가 그대로 발송되는 것보다 같이 받아주는 편이 낫다.
@@ -114,7 +116,8 @@ function applyVars_(template, vars) {
 }
 
 var MSG_VARIABLES = [
-  '#{학원명}', '#{학생명}', '#{날짜}', '#{시간}', '#{등하원조건}', '#{이모티콘}'
+  '#{학원명}', '#{학생명}', '#{날짜}', '#{시간}', '#{등하원조건}', '#{이모티콘}',
+  '#{수신거부키}'
 ];
 
 /** 예전 이름 → 지금 이름. 옛 문구가 남아 있어도 그대로 동작한다. */
@@ -185,7 +188,7 @@ function templateFor_() {
  * @return {{ok, channel, messageId, error}}
  */
 function sendOne_(provider, academy, student, log) {
-  var msg = buildMessage_(academy, log.이름, log.구분, log.출결시각);
+  var msg = buildMessage_(academy, log.이름, log.구분, log.출결시각, log.학생ID);
   var to = student.보호자연락처;
   var templateId = templateFor_();
   var useAlimtalk = !!templateId && !!str_(setting_('발신프로필키'));
@@ -400,7 +403,7 @@ function checkMessagingSetup() {
   check.problems.forEach(function (msg) { lines.push('  ! ' + msg); });
 
   [KIND.등원, KIND.하원].forEach(function (kind) {
-    var sample = buildMessage_(getAcademyName_(), '남궁철수', kind, now_());
+    var sample = buildMessage_(getAcademyName_(), '남궁철수', kind, now_(), 'S001');
     var stripped = sample.text !== sample.sms;
 
     lines.push('');
@@ -417,6 +420,30 @@ function checkMessagingSetup() {
       lines.push('    ! 90바이트에 맞추려고 학원명을 줄였습니다.');
     }
   });
+
+  // 수신거부 버튼은 템플릿의 일부라 심사 때 같이 올려야 한다
+  lines.push('');
+  lines.push('[수신거부 버튼]  알림톡 템플릿에 웹링크 버튼으로 등록합니다');
+  lines.push('  버튼명: 출결 알림 받지 않기');
+
+  var base = webAppUrl_().url;
+  if (!base) {
+    lines.push('  ! 웹앱 주소가 등록되지 않아 링크를 만들 수 없습니다.');
+    lines.push('    메뉴 [출결 관리] > 웹앱 주소 등록 을 먼저 해주세요.');
+  } else {
+    lines.push('');
+    lines.push('  (1) 대행사 콘솔이 버튼 링크에 변수를 받아준다면 — 권장');
+    lines.push('      ' + optoutLinkTemplate_());
+    lines.push('      누르면 그 학생 화면이 바로 열립니다.');
+    lines.push('');
+    lines.push('  (2) 링크가 고정 입력만 되면');
+    lines.push('      ' + optoutFixedLink_());
+    lines.push('      보호자가 학생 이름과 연락처를 넣어 본인 확인을 합니다.');
+    lines.push('      둘 다 맞아야 열립니다.');
+  }
+  lines.push('');
+  lines.push('  ※ SMS 로 대체될 때는 버튼이 없습니다. 문자만 받는 보호자는');
+  lines.push('     학원에 말씀하시면 _출결_학생 시트에서 꺼드리면 됩니다.');
 
   if (pf && tid) {
     lines.push('');

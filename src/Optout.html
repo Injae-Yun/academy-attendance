@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>출결 알림 설정</title>
+  <?!= includeOptional('Brand'); ?>
+  <style>
+    /* 보호자가 휴대폰에서 한 번 여는 화면이다.
+       앱 CSS 를 끌어오지 않고 여기서 끝낸다 — 이 화면 하나 때문에
+       태블릿 앱 스타일이 끌려다닐 이유가 없다. */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh; padding: 24px 20px;
+      display: flex; align-items: center; justify-content: center;
+      background: #f4f5f7; color: #1c1e21;
+      font: 16px/1.6 system-ui, -apple-system, 'Malgun Gothic', sans-serif;
+      -webkit-text-size-adjust: 100%;
+    }
+    .card {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 420px; padding: 32px 24px 24px;
+      background: #fff; border-radius: 16px;
+      box-shadow: 0 2px 16px rgba(0, 0, 0, .08);
+      text-align: center;
+    }
+    .academy { margin-bottom: 20px; font-size: 14px; color: #6b7280; }
+    .name { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+    .state { font-size: 15px; color: #6b7280; margin-bottom: 26px; }
+    .state b { color: #1c1e21; }
+
+    button {
+      width: 100%; height: 56px; margin-top: 10px;
+      border: 0; border-radius: 12px;
+      font-size: 17px; font-weight: 600; font-family: inherit;
+      cursor: pointer;
+    }
+    .stop { background: #fdecec; color: #c0392b; }
+    .resume { background: #2f6feb; color: #fff; }
+    button[disabled] { opacity: .5; }
+
+    .note {
+      margin-top: 22px; padding-top: 18px;
+      border-top: 1px solid #e5e7eb;
+      font-size: 13px; line-height: 1.7; color: #6b7280; text-align: left;
+    }
+    .done { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+    .error { color: #c0392b; font-size: 14px; margin-top: 12px; }
+    .hidden { display: none; }
+    .spinner { color: #6b7280; font-size: 15px; }
+
+    .field { display: block; margin-bottom: 14px; text-align: left; }
+    .field span {
+      display: block; margin-bottom: 6px;
+      font-size: 13px; font-weight: 600; color: #6b7280;
+    }
+    .field input {
+      width: 100%; height: 52px; padding: 0 14px;
+      border: 1px solid #d1d5db; border-radius: 10px;
+      font-size: 16px; font-family: inherit; background: #fff;
+    }
+    .field input:focus {
+      outline: none; border-color: #2f6feb;
+      box-shadow: 0 0 0 3px rgba(47, 111, 235, .15);
+    }
+    .pick-btn {
+      background: #eef2ff; color: #1c1e21;
+      text-align: left; padding: 0 16px; height: 52px;
+    }
+    .pick-btn small { color: #6b7280; font-weight: 400; }
+  </style>
+  <script>window.__KEY__ = <?!= keyJson ?>;</script>
+</head>
+<body>
+
+<div class="card">
+  <div id="loading" class="spinner">불러오는 중…</div>
+
+  <div id="main" class="hidden">
+    <span class="panel-mark"></span>
+    <div class="academy" id="academy"></div>
+    <div class="name" id="name"></div>
+    <div class="state" id="state"></div>
+
+    <button id="stop" class="stop hidden">출결 알림 받지 않기</button>
+    <button id="resume" class="resume hidden">출결 알림 다시 받기</button>
+
+    <p class="note">
+      알림을 끄면 등원·하원 알림톡과 문자가 모두 나가지 않습니다.
+      이 화면에서 언제든 다시 켤 수 있습니다.
+    </p>
+  </div>
+
+  <div id="result" class="hidden">
+    <span class="panel-mark"></span>
+    <div class="done" id="resultTitle"></div>
+    <div class="state" id="resultText"></div>
+    <button id="undo" class="resume">되돌리기</button>
+  </div>
+
+  <!-- 링크에 학생 키가 없을 때. 알림톡 버튼에 변수를 못 넣는 대행사가 있다. -->
+  <div id="lookup" class="hidden">
+    <span class="panel-mark"></span>
+    <div class="academy" id="lookupAcademy"></div>
+    <div class="name">출결 알림 설정</div>
+    <div class="state" id="lookupHint"></div>
+
+    <label class="field">
+      <span>학생 이름</span>
+      <input id="qName" type="text" autocomplete="off" placeholder="예: 홍길동">
+    </label>
+    <label class="field">
+      <span>보호자 연락처</span>
+      <input id="qPhone" type="tel" inputmode="numeric" autocomplete="tel"
+             placeholder="010-0000-0000">
+    </label>
+
+    <p class="error hidden" id="lookupError"></p>
+    <button id="lookupGo" class="resume">확인</button>
+
+    <div id="pick" class="hidden">
+      <p class="note" style="text-align:center">어느 학생인가요?</p>
+      <div id="pickList"></div>
+    </div>
+  </div>
+
+  <div id="fail" class="hidden">
+    <div class="done error">열 수 없습니다</div>
+    <div class="state" id="failText"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var KEY = window.__KEY__ || '';
+  var $ = function (id) { return document.getElementById(id); };
+  var receiving = true;
+  var name = '';
+
+  function call(fn, args) {
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (e) {
+          reject(new Error(e && e.message ? e.message : String(e)));
+        })[fn].apply(null, args || []);
+    });
+  }
+
+  function show(which) {
+    ['loading', 'main', 'result', 'lookup', 'fail'].forEach(function (id) {
+      $(id).classList.toggle('hidden', id !== which);
+    });
+  }
+
+  /* ── 본인 확인 (링크에 키가 없을 때) ─────────────────────── */
+
+  function doLookup() {
+    var err = $('lookupError');
+    err.classList.add('hidden');
+    $('pick').classList.add('hidden');
+
+    var n = $('qName').value.trim();
+    var p = $('qPhone').value.trim();
+    if (!n || !p) {
+      err.textContent = '학생 이름과 연락처를 모두 입력해주세요.';
+      err.classList.remove('hidden');
+      return;
+    }
+
+    $('lookupGo').disabled = true;
+    call('optoutLookup', [n, p]).then(function (res) {
+      $('lookupGo').disabled = false;
+      if (!res.ok) {
+        err.textContent = res.message;
+        err.classList.remove('hidden');
+        return;
+      }
+      // 형제자매가 같은 번호를 쓰면 여러 명이 나온다
+      if (res.students.length === 1) { enter(res.students[0]); return; }
+
+      var box = $('pickList');
+      box.innerHTML = '';
+      res.students.forEach(function (s) {
+        var b = document.createElement('button');
+        b.className = 'pick-btn';
+        b.innerHTML = s.name + ' <small>' +
+          (s.receiving ? '알림 받는 중' : '알림 꺼짐') + '</small>';
+        b.addEventListener('click', function () { enter(s); });
+        box.appendChild(b);
+      });
+      $('pick').classList.remove('hidden');
+    }).catch(function (e) {
+      $('lookupGo').disabled = false;
+      err.textContent = '잠시 후 다시 시도해주세요. (' + e.message + ')';
+      err.classList.remove('hidden');
+    });
+  }
+
+  function enter(student) {
+    KEY = student.key;
+    name = student.name;
+    receiving = student.receiving;
+    renderMain();
+  }
+
+  function renderMain() {
+    $('name').textContent = name + ' 학생';
+    $('state').innerHTML = receiving
+      ? '지금은 출결 알림을 <b>받고 있습니다.</b>'
+      : '지금은 출결 알림을 <b>받지 않고 있습니다.</b>';
+    $('stop').classList.toggle('hidden', !receiving);
+    $('resume').classList.toggle('hidden', receiving);
+    show('main');
+  }
+
+  function apply(want) {
+    $('stop').disabled = true;
+    $('resume').disabled = true;
+    $('undo').disabled = true;
+
+    call('optoutSet', [KEY, want]).then(function (res) {
+      $('stop').disabled = false;
+      $('resume').disabled = false;
+      $('undo').disabled = false;
+
+      if (!res.ok) { $('failText').textContent = res.message; show('fail'); return; }
+
+      receiving = res.receiving;
+      $('resultTitle').textContent = receiving ? '알림을 다시 켰습니다' : '알림을 껐습니다';
+      $('resultText').textContent = res.message;
+      $('undo').textContent = receiving ? '다시 끄기' : '되돌리기';
+      show('result');
+    }).catch(function (e) {
+      $('stop').disabled = false;
+      $('resume').disabled = false;
+      $('undo').disabled = false;
+      $('failText').textContent = '잠시 후 다시 시도해주세요. (' + e.message + ')';
+      show('fail');
+    });
+  }
+
+  $('stop').addEventListener('click', function () { apply(false); });
+  $('resume').addEventListener('click', function () { apply(true); });
+  $('undo').addEventListener('click', function () { apply(!receiving); });
+  $('lookupGo').addEventListener('click', doLookup);
+  $('qPhone').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') doLookup();
+  });
+
+  call('optoutBootstrap', [KEY]).then(function (res) {
+    $('academy').textContent = res.academy || '';
+    $('lookupAcademy').textContent = res.academy || '';
+
+    if (res.ok) {
+      name = res.name;
+      receiving = res.receiving;
+      renderMain();
+      return;
+    }
+    // 링크에 키가 없거나 서명이 깨졌으면 직접 확인하게 한다
+    if (res.needsLookup) {
+      $('lookupHint').textContent = res.message;
+      show('lookup');
+      return;
+    }
+    $('failText').textContent = res.message;
+    show('fail');
+  }).catch(function (e) {
+    $('failText').textContent = '서버에 연결하지 못했습니다. (' + e.message + ')';
+    show('fail');
+  });
+})();
+</script>
+</body>
+</html>

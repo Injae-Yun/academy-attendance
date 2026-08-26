@@ -196,28 +196,6 @@ function menuUninstallTriggers() {
   showReport_('자동 실행', uninstallTriggers());
 }
 
-/**
- * 웹앱 주소를 알아낸다.
- *
- * ScriptApp.getService().getUrl() 을 그대로 쓰면 안 된다. 메뉴처럼 편집기 쪽에서
- * 부르면 배포 주소(/exec)가 아니라 개발 주소(/dev)를 돌려준다. /dev 는 스크립트
- * 편집 권한이 있는 계정에서만 열려서, 태블릿에서는 물론이고 구글 계정이 여러 개
- * 로그인돼 있으면 본인 PC 에서도 열리지 않는다.
- *
- * 그래서 배포 주소를 _출결_설정에 적어두고 그 값을 우선한다.
- *
- * @return {{url: string, source: string}} source 는 setting | dev | exec | none
- */
-function webAppUrl_() {
-  var saved = String(setting_('웹앱주소', '') || '').trim();
-  if (saved) return { url: saved, source: 'setting' };
-
-  var url = '';
-  try { url = ScriptApp.getService().getUrl() || ''; } catch (err) { url = ''; }
-  if (!url) return { url: '', source: 'none' };
-  return { url: url, source: /\/dev\/?$/.test(url) ? 'dev' : 'exec' };
-}
-
 /** 주소 뒤에 쿼리를 하나 붙인다. */
 function withParam_(url, kv) {
   return url + (url.indexOf('?') === -1 ? '?' : '&') + kv;
@@ -386,14 +364,27 @@ function menuSetWebAppUrl() {
 /* ── 웹앱 진입점 ─────────────────────────────────────────────────── */
 
 /**
- * @param {Object} e 쿼리 파라미터. page=admin 이면 관리자 화면.
+ * @param {Object} e 쿼리 파라미터.
+ *   page=admin   관리자 화면
+ *   page=optout  보호자 수신거부 (알림톡 버튼으로 들어온다)
  */
 function doGet(e) {
   applyProbedLayout_();
   var params = (e && e.parameter) || {};
   var page = params.page || 'app';
-  var file = page === 'admin' ? 'Admin' : 'App';
 
+  // 보호자가 휴대폰에서 여는 화면이다. 기기 토큰도 관리자 인증도 필요 없고,
+  // 링크에 실린 서명 키만으로 어느 학생인지 가린다.
+  if (page === 'optout') {
+    var opt = HtmlService.createTemplateFromFile('Optout');
+    opt.keyJson = toSafeJson_(str_(params.k));
+    return opt.evaluate()
+      .setTitle(getAcademyName_() + ' 출결 알림 설정')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
+  var file = page === 'admin' ? 'Admin' : 'App';
   var template = HtmlService.createTemplateFromFile(file);
 
   // 주소에 실린 기기 토큰을 화면으로 넘긴다.
