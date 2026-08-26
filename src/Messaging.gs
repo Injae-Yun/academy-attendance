@@ -59,14 +59,23 @@ function buildMessage_(academy, name, kind, at) {
   var template = messageTemplate_();
   var word = KIND_WORD[kind] || KIND_WORD[KIND.등원];
 
+  var emoji = KIND_EMOJI[kind] || KIND_EMOJI[KIND.등원];
+
   var varsFor = function (aca) {
-    return {
+    var v = {
       '#{학원명}': aca,
       '#{학생명}': name,
-      '#{일자}': fmtDotDate_(at),
-      '#{시각}': fmtTime_(at),
-      '#{구분}': word
+      '#{날짜}': fmtDotDate_(at),
+      '#{시간}': fmtTime_(at),
+      '#{등하원조건}': word,
+      '#{이모티콘}': emoji
     };
+    // 예전 이름으로 저장된 문구가 시트에 남아 있을 수 있다.
+    // 조용히 '#{일자}' 글자가 그대로 발송되는 것보다 같이 받아주는 편이 낫다.
+    Object.keys(MSG_VAR_ALIAS).forEach(function (oldName) {
+      v[oldName] = v[MSG_VAR_ALIAS[oldName]];
+    });
+    return v;
   };
 
   // 알림톡 본문. 심사 통과한 문구 그대로 나가야 하므로 손대지 않는다.
@@ -104,7 +113,16 @@ function applyVars_(template, vars) {
   return out;
 }
 
-var MSG_VARIABLES = ['#{학원명}', '#{학생명}', '#{일자}', '#{시각}', '#{구분}'];
+var MSG_VARIABLES = [
+  '#{학원명}', '#{학생명}', '#{날짜}', '#{시간}', '#{등하원조건}', '#{이모티콘}'
+];
+
+/** 예전 이름 → 지금 이름. 옛 문구가 남아 있어도 그대로 동작한다. */
+var MSG_VAR_ALIAS = {
+  '#{일자}': '#{날짜}',
+  '#{시각}': '#{시간}',
+  '#{구분}': '#{등하원조건}'
+};
 
 /**
  * 문구가 쓸 만한지 본다.
@@ -117,21 +135,31 @@ function validateTemplate_(template) {
   if (!t) {
     return { ok: false, problems: ['문구가 비어 있습니다.'], unknown: [] };
   }
-  if (t.indexOf('#{학생명}') === -1) {
+  /** 지금 이름이든 예전 이름이든 들어 있으면 된다. */
+  var has = function (name) {
+    if (t.indexOf(name) !== -1) return true;
+    return Object.keys(MSG_VAR_ALIAS).some(function (old) {
+      return MSG_VAR_ALIAS[old] === name && t.indexOf(old) !== -1;
+    });
+  };
+
+  if (!has('#{학생명}')) {
     problems.push('#{학생명} 이 없습니다. 누구의 알림인지 알 수 없습니다.');
   }
-  if (t.indexOf('#{시각}') === -1) {
-    problems.push('#{시각} 이 없습니다. 출결 시각이 빠집니다.');
+  if (!has('#{시간}')) {
+    problems.push('#{시간} 이 없습니다. 출결 시각이 빠집니다.');
   }
-  if (t.indexOf('#{구분}') === -1) {
-    problems.push('#{구분} 이 없습니다. 등원과 하원 알림이 똑같이 나갑니다.');
+  if (!has('#{등하원조건}')) {
+    problems.push('#{등하원조건} 이 없습니다. 등원과 하원 알림이 똑같이 나갑니다.');
   }
 
   // 우리가 모르는 변수를 쓰면 그대로 문자로 나간다
   var unknown = [];
   var found = t.match(/#\{[^}]*\}/g) || [];
   found.forEach(function (v) {
-    if (MSG_VARIABLES.indexOf(v) === -1 && unknown.indexOf(v) === -1) unknown.push(v);
+    if (MSG_VARIABLES.indexOf(v) !== -1) return;
+    if (MSG_VAR_ALIAS[v]) return;                 // 예전 이름도 받아준다
+    if (unknown.indexOf(v) === -1) unknown.push(v);
   });
   if (unknown.length) {
     problems.push('알 수 없는 변수: ' + unknown.join(', ') + ' — 글자 그대로 발송됩니다.');
@@ -140,7 +168,7 @@ function validateTemplate_(template) {
   return { ok: problems.length === 0, problems: problems, unknown: unknown };
 }
 
-/** 알림톡 템플릿 코드. 등·하원이 #{구분} 으로 갈리므로 한 벌만 쓴다. */
+/** 알림톡 템플릿 코드. 등·하원이 #{등하원조건} 으로 갈리므로 한 벌만 쓴다. */
 function templateFor_() {
   return str_(setting_('템플릿ID'));
 }
@@ -376,7 +404,8 @@ function checkMessagingSetup() {
     var stripped = sample.text !== sample.sms;
 
     lines.push('');
-    lines.push('  · ' + kind + ' (#{구분} → ' + (KIND_WORD[kind] || '') + ')');
+    lines.push('  · ' + kind + ' (#{등하원조건} → ' + (KIND_WORD[kind] || '') +
+      ' · #{이모티콘} → ' + (KIND_EMOJI[kind] || '') + ')');
     lines.push('    알림톡: ' + sample.text.split('\n').join(' ⏎ '));
     lines.push('    SMS  : ' + sample.sms.split('\n').join(' ⏎ '));
     lines.push('    ' + sample.bytes + '바이트 — ' +
