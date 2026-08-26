@@ -103,27 +103,87 @@ function adminListDay(token, ticket, dateStr) {
     return a.출결시각.getTime() - b.출결시각.getTime();
   });
 
+  return { ok: true, date: target, records: rows.map(mapLogRow_) };
+}
+
+/**
+ * 로그 한 줄을 화면이 쓰는 모양으로 바꾼다.
+ *
+ * date 를 반드시 실어 보낸다. 다른 날 기록을 찾아 고칠 때 화면이 보고 있는
+ * 날짜를 쓰면 기록이 엉뚱한 날로 옮겨간다.
+ */
+function mapLogRow_(r) {
+  return {
+    id: r.기록ID,
+    studentId: r.학생ID,
+    name: r.이름,
+    kind: r.구분,
+    date: fmtDate_(r.출결시각),
+    at: fmtTime_(r.출결시각),
+    enteredAt: r.입력시각 ? fmtTime_(r.입력시각) : '',
+    adjusted: !!(r.입력시각 && fmtTime_(r.출결시각) !== fmtTime_(r.입력시각)),
+    status: r.상태,
+    send: r.발송상태,
+    channel: r.발송채널,
+    error: r.오류,
+    subject: r.과목,
+    device: r.기기,
+    note: r.비고
+  };
+}
+
+/** 이름으로 찾을 때 기본으로 훑는 기간(일)과 상한 */
+var ADMIN_FIND_DAYS = 60;
+var ADMIN_FIND_MAX_DAYS = 400;
+var ADMIN_FIND_MAX_ROWS = 200;
+
+/**
+ * 이름으로 기록을 찾는다. 날짜를 몰라도 고칠 기록을 집을 수 있어야 한다.
+ *
+ * 하루치 목록은 그날 안에서만 걸러지므로, 언제 잘못 찍혔는지 모르면
+ * 날짜를 하나씩 넘겨가며 찾아야 했다.
+ *
+ * @param {string} query 이름 또는 초성
+ * @param {number=} days 며칠치를 훑을지 (기본 60, 최대 400)
+ */
+function adminFindRecords(token, ticket, query, days) {
+  applyProbedLayout_();
+  try {
+    requireAdmin_(token, ticket);
+  } catch (e) {
+    return { ok: false, needsUnlock: !!e.needsUnlock, message: e.message };
+  }
+
+  var q = str_(query);
+  if (!q) return { ok: false, message: '찾을 이름을 입력해주세요.' };
+
+  var back = parseInt(days, 10);
+  if (!back || back < 1) back = ADMIN_FIND_DAYS;
+  if (back > ADMIN_FIND_MAX_DAYS) back = ADMIN_FIND_MAX_DAYS;
+
+  var from = startOfDay_(new Date(now_().getTime() - (back - 1) * 86400000));
+
+  var rows = readLogs_().filter(function (r) {
+    if (!r.출결시각) return false;
+    if (r.출결시각.getTime() < from.getTime()) return false;
+    return matchesQuery_(r.이름, q);
+  });
+
+  // 최근 것부터. 방금 잘못 찍은 걸 고치러 오는 경우가 대부분이다.
+  rows.sort(function (a, b) {
+    return b.출결시각.getTime() - a.출결시각.getTime();
+  });
+
+  var total = rows.length;
+  var shown = rows.slice(0, ADMIN_FIND_MAX_ROWS);
+
   return {
     ok: true,
-    date: target,
-    records: rows.map(function (r) {
-      return {
-        id: r.기록ID,
-        studentId: r.학생ID,
-        name: r.이름,
-        kind: r.구분,
-        at: fmtTime_(r.출결시각),
-        enteredAt: r.입력시각 ? fmtTime_(r.입력시각) : '',
-        adjusted: !!(r.입력시각 && fmtTime_(r.출결시각) !== fmtTime_(r.입력시각)),
-        status: r.상태,
-        send: r.발송상태,
-        channel: r.발송채널,
-        error: r.오류,
-        subject: r.과목,
-        device: r.기기,
-        note: r.비고
-      };
-    })
+    query: q,
+    days: back,
+    total: total,
+    truncated: total > shown.length,
+    records: shown.map(mapLogRow_)
   };
 }
 

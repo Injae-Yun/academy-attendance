@@ -11,6 +11,9 @@
 
   var LS = { token: 'attend.token' };
 
+  /** 이름으로 찾을 때 훑는 기간(일). 서버도 같은 값을 상한으로 본다. */
+  var FIND_DAYS = 60;
+
   var state = {
     token: null,
     ticket: null,
@@ -18,7 +21,11 @@
     academy: '',
     date: '',
     query: '',         // 목록 이름 검색 (초성 가능)
+    scope: 'day',      // day = 이 날짜만 · all = 날짜를 넘어 찾기
     records: [],
+    found: [],         // 날짜를 넘어 찾은 결과
+    foundTotal: 0,
+    foundTruncated: false,
     roster: [],
     editing: null,     // 지금 고치는 기록
     mode: '',          // time | kind | resend | cancel
@@ -210,7 +217,7 @@
     if (!q) return state.records;
 
     // 자음만 쳤을 때만 초성으로 본다.
-    // 완성된 글자까지 초성으로 대조하면 "황" 이 "김하늘"(ㅇㄱㅎ) 을 잡는다.
+    // 완성된 글자까지 초성으로 대조하면 "홍" 이 "김하늘"(ㄱㅎㄴ) 을 잡는다.
     var byChosung = /^[ㄱ-ㅎ]+$/.test(q);
 
     return state.records.filter(function (r) {
@@ -219,20 +226,74 @@
     });
   }
 
+  /** 지금 목록에 뿌릴 것들. 날짜를 넘어 찾는 중이면 검색 결과를 쓴다. */
+  function activeList() {
+    if (state.scope !== 'all') {
+      return { rows: filteredRecords(), showDate: false, total: state.records.length };
+    }
+    return { rows: state.found, showDate: true, total: state.foundTotal };
+  }
+
+  /**
+   * 날짜를 넘어 이름으로 찾는다.
+   *
+   * 하루치 목록은 그날 안에서만 걸러지므로, 언제 잘못 찍혔는지 모르면
+   * 날짜를 하나씩 넘겨가며 찾아야 했다.
+   */
+  function findAcrossDays() {
+    if (state.scope !== 'all') return;
+    if (!state.query) {
+      state.found = [];
+      state.foundTotal = 0;
+      state.foundTruncated = false;
+      renderRecords();
+      return;
+    }
+
+    var q = state.query;
+    call('adminFindRecords', [state.token, state.ticket, q, FIND_DAYS]).then(function (res) {
+      if (handleAuth(res)) return;
+      if (state.query !== q || state.scope !== 'all') return;   // 그새 바뀌었으면 버린다
+      if (!res.ok) { toast(res.message, true); return; }
+      state.found = res.records || [];
+      state.foundTotal = res.total || 0;
+      state.foundTruncated = !!res.truncated;
+      renderRecords();
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function setScope(scope) {
+    state.scope = scope;
+    $('scopeDay').classList.toggle('on', scope === 'day');
+    $('scopeAll').classList.toggle('on', scope === 'all');
+    if (scope === 'all') findAcrossDays();
+    else renderRecords();
+  }
+
   function renderRecords() {
     var box = $('recordList');
     box.innerHTML = '';
 
-    var list = filteredRecords();
+    var view = activeList();
+    var list = view.rows;
+
     var empty = $('emptyDay');
     empty.classList.toggle('hidden', list.length > 0);
-    empty.textContent = state.query
-      ? '"' + state.query + '" 와 맞는 기록이 없습니다.'
-      : '이 날짜에는 기록이 없습니다.';
+    empty.textContent = state.scope === 'all'
+      ? (state.query
+          ? '최근 ' + FIND_DAYS + '일 안에 "' + state.query + '" 와 맞는 기록이 없습니다.'
+          : '찾을 이름이나 초성을 입력하세요.')
+      : (state.query
+          ? '"' + state.query + '" 와 맞는 기록이 없습니다.'
+          : '이 날짜에는 기록이 없습니다.');
 
-    $('recCount').textContent = state.query
-      ? list.length + ' / ' + state.records.length + '건'
-      : (state.records.length ? state.records.length + '건' : '');
+    $('recCount').textContent = state.scope === 'all'
+      ? (state.query
+          ? (state.foundTruncated ? list.length + ' / ' + view.total + '건' : view.total + '건')
+          : '')
+      : (state.query
+          ? list.length + ' / ' + view.total + '건'
+          : (view.total ? view.total + '건' : ''));
 
     list.forEach(function (r) {
       var el = document.createElement('button');
@@ -242,6 +303,13 @@
       var time = document.createElement('div');
       time.className = 'rec-time';
       time.textContent = r.at;
+      // 날짜를 넘어 찾은 결과는 어느 날 것인지 보여야 한다
+      if (view.showDate && r.date) {
+        var day = document.createElement('span');
+        day.className = 'rec-day';
+        day.textContent = r.date.slice(5).replace('-', '/');
+        time.appendChild(day);
+      }
       el.appendChild(time);
 
       var body = document.createElement('div');
@@ -338,8 +406,11 @@
     state.editAt = null;
 
     $('editName').textContent = rec.name;
+    // 그 기록이 실제로 속한 날짜를 쓴다.
+    // 화면이 보고 있는 날짜(state.date)를 쓰면 다른 날 기록을 찾아 고칠 때
+    // 엉뚱한 날로 옮겨간다.
     $('editSub').textContent = [
-      state.date, rec.kind, rec.at,
+      rec.date || state.date, rec.kind, rec.at,
       rec.subject || '', rec.status, rec.send
     ].filter(Boolean).join(' · ');
 
@@ -389,7 +460,7 @@
 
     if (mode === 'time') {
       var parts = state.editing.at.split(':');
-      var d = new Date(state.date + 'T00:00:00');
+      var d = new Date((state.editing.date || state.date) + 'T00:00:00');
       d.setHours(Number(parts[0]), Number(parts[1]), 0, 0);
       state.editAt = d;
       $('editDate').value = ymd(d);
@@ -678,6 +749,7 @@
       renderAlerts(res.summary);
     }).catch(function () {});
     loadDay();
+    findAcrossDays();   // 날짜를 넘어 찾는 중이면 그 결과도 다시 받는다
     loadHistory();
   }
 
@@ -693,17 +765,28 @@
   /* ── 이벤트 ──────────────────────────────────────────────── */
 
   function init() {
+    var findTimer = null;
     $('recSearch').addEventListener('input', function (e) {
       state.query = e.target.value.trim();
       $('recSearchClear').classList.toggle('hidden', !state.query);
       renderRecords();
+      if (state.scope === 'all') {
+        // 한 글자마다 서버를 부르지 않는다
+        clearTimeout(findTimer);
+        findTimer = setTimeout(findAcrossDays, 250);
+      }
     });
     $('recSearchClear').addEventListener('click', function () {
       state.query = '';
       $('recSearch').value = '';
       $('recSearchClear').classList.add('hidden');
+      state.found = [];
+      state.foundTotal = 0;
+      state.foundTruncated = false;
       renderRecords();
     });
+    $('scopeDay').addEventListener('click', function () { setScope('day'); });
+    $('scopeAll').addEventListener('click', function () { setScope('all'); });
 
     $('lockSubmit').addEventListener('click', unlock);
     $('lockPin').addEventListener('keydown', function (e) { if (e.key === 'Enter') unlock(); });

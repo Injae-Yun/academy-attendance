@@ -315,8 +315,11 @@ function matchesQuery_(name, query) {
   var n = String(name);
   var q = String(query).trim();
   if (!q) return true;
-  if (n.indexOf(q) !== -1) return true;
-  return getChosung_(n).indexOf(getChosung_(q)) !== -1;
+
+  // 자음만 쳤을 때에만 초성으로 본다.
+  // 완성된 글자까지 초성으로 대조하면 '홍' 이 '김하늘'(ㄱㅎㄴ) 을 잡는다.
+  if (/^[ㄱ-ㅎ]+$/.test(q)) return getChosung_(n).indexOf(q) !== -1;
+  return n.indexOf(q) !== -1;
 }
 
 /* ── 동명이인 접미사 ──────────────────────────────────────────────── */
