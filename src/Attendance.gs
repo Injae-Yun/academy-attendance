@@ -86,7 +86,9 @@ function getBootstrap(token) {
  *   kind       '등원' | '하원'
  *   atIso      출결시각 (ISO 문자열). 없으면 지금
  *   pin        키오스크 모드에서 학생 PIN
- *   force      중복 확인 후 사용자가 강행할 때 true
+ *   force      중복 확인을 건너뛴다 (오프라인 큐처럼 이미 확인을 거친 경우)
+ *   replaceId  이 기록ID 를 새 값으로 덮어쓴다. 중복 확인에서 받은 값을 그대로 돌려준다.
+ *              없으면 새 줄을 남긴다.
  * @return {Object} ok / needsConfirm / message ...
  */
 function recordAttendance(req) {
@@ -158,11 +160,17 @@ function recordAttendance(req) {
         if (!subjectsOverlap_(prevSubjects_(prev), req.subjects, student)) continue;
         var gap = Math.abs(diffMinutes_(at, prev.출결시각));
         if (gap <= blockMin) {
+          // 새 줄을 만들지 않고 그 기록을 고칠 것이므로, 어느 기록인지 알려준다.
+          // 확인을 누르면 이 기록ID 를 replaceId 로 되돌려 보낸다.
           return {
             ok: false,
             needsConfirm: true,
+            replaceId: prev.기록ID,
             message: '이미 ' + fmtTime_(prev.출결시각) + '에 ' + kind +
-              ' 기록이 있습니다. 다시 기록할까요?'
+              ' 기록이 있습니다. ' +
+              (fmtTime_(prev.출결시각) === fmtTime_(at)
+                ? '같은 시각으로 다시 기록할까요?'
+                : fmtTime_(at) + ' 로 고칠까요?')
           };
         }
         break;
@@ -170,7 +178,12 @@ function recordAttendance(req) {
     }
 
     var display = student.표시명 || student.이름;
-    var recordId = nextLogId_(logs);
+
+    // 중복 확인에서 "고칠까요?" 에 확인을 누른 경우.
+    // 새 줄을 만들면 목록에 잘못된 기록이 그대로 남는다. 그 줄을 고치고
+    // 고쳤다는 사실은 _출결_이력에 남긴다.
+    var replacing = req.replaceId ? findReplaceTarget_(logs, req.replaceId, student, kind) : null;
+    var recordId = replacing ? replacing.기록ID : nextLogId_(logs);
 
     // 복수 과목 학생이 어떤 수업으로 왔는지 고른 값.
     // 안 고르면 그 학생의 모든 과목으로 본다.
@@ -192,19 +205,31 @@ function recordAttendance(req) {
       sendState = SENDST.관리자;
     }
 
-    appendLog_({
-      기록ID: recordId,
-      입력시각: enteredAt,      // 실제로 탭한 시각
-      출결시각: at,             // 사용자가 고른 시각 (5분 조정 반영)
-      학생ID: student.학생ID,
-      이름: display,
-      구분: kind,
-      상태: LOGST.정상,
-      기기: device.label,
-      발송상태: sendState,
-      과목: subjectText,
-      비고: buildNote_(req, isAdmin, at, enteredAt)
-    });
+    if (replacing) {
+      supersedeLog_(replacing, {
+        at: at,
+        enteredAt: enteredAt,
+        subjects: picked,
+        subjectText: subjectText,
+        sendState: sendState,
+        device: device,
+        note: buildNote_(req, isAdmin, at, enteredAt)
+      });
+    } else {
+      appendLog_({
+        기록ID: recordId,
+        입력시각: enteredAt,      // 실제로 탭한 시각
+        출결시각: at,             // 사용자가 고른 시각 (5분 조정 반영)
+        학생ID: student.학생ID,
+        이름: display,
+        구분: kind,
+        상태: LOGST.정상,
+        기기: device.label,
+        발송상태: sendState,
+        과목: subjectText,
+        비고: buildNote_(req, isAdmin, at, enteredAt)
+      });
+    }
 
     // 등원이면 원장(그리고 같은 달을 보고 있으면 출석부)에 O 를 찍는다
     var markInfo = { ledger: 0, book: 0, rowFound: 0, alreadyMarked: false, skipped: '' };
@@ -241,8 +266,10 @@ function recordAttendance(req) {
       admin: isAdmin,
       subjects: picked,
       notified: sendState === SENDST.대기,
+      replaced: !!replacing,
       date: fmtDate_(at),
-      message: display + ' ' + kind + ' ' + fmtTime_(at)
+      message: display + ' ' + kind + ' ' + fmtTime_(at) +
+        (replacing ? ' (수정)' : '')
     };
   }, 30000);
 }
@@ -280,6 +307,92 @@ function buildNote_(req, isAdmin, at, enteredAt) {
     parts.push('관리자 소급 기록');
   }
   return parts.join(' · ');
+}
+
+/**
+ * 덮어쓸 기록을 찾는다.
+ *
+ * 조건이 하나라도 어긋나면 null 을 돌려 평소처럼 새 줄을 남긴다.
+ * 엉뚱한 기록을 덮어쓰는 것보다 줄이 하나 더 생기는 편이 낫다.
+ */
+function findReplaceTarget_(logs, recordId, student, kind) {
+  for (var i = 0; i < logs.length; i++) {
+    var r = logs[i];
+    if (r.기록ID !== str_(recordId)) continue;
+    if (r.학생ID !== student.학생ID) return null;
+    if (r.구분 !== kind) return null;
+    if (r.상태 === LOGST.취소됨) return null;
+    return r;
+  }
+  return null;
+}
+
+/**
+ * 기록 한 줄을 새 값으로 덮어쓴다.
+ *
+ * 잘못 찍힌 기록이 목록에 남아 있으면 어느 쪽이 맞는지 알 수 없다.
+ * 줄은 하나만 두고, 무엇이 어떻게 바뀌었는지는 _출결_이력에 남긴다.
+ *
+ * @param {Object} target 덮어쓸 로그 (readLogs_ 가 준 행)
+ * @param {Object} next   { at, enteredAt, subjectText, sendState, device, note }
+ */
+function supersedeLog_(target, next) {
+  var beforeAt = fmtStamp_(target.출결시각);
+  var beforeSubjects = normalizeSubjectFilter_(target.과목);
+  var afterSubjects = normalizeSubjectFilter_(next.subjectText);
+
+  // 등원이면 옛 O 를 걷어낸다. 날짜와 과목이 그대로면 건드릴 이유가 없다.
+  // 새 O 는 이 함수를 부른 쪽에서 찍는다.
+  if (target.구분 === KIND.등원) {
+    var dayChanged = fmtDate_(target.출결시각) !== fmtDate_(next.at);
+    var subjChanged = beforeSubjects.join(',') !== afterSubjects.join(',');
+
+    if (dayChanged || subjChanged) {
+      // 같은 날 · 같은 과목의 다른 등원이 남아 있으면 O 는 그대로 둔다
+      var day = fmtDate_(target.출결시각);
+      var others = readLogs_().filter(function (r) {
+        if (r.기록ID === target.기록ID) return false;
+        if (r.학생ID !== target.학생ID) return false;
+        if (r.구분 !== KIND.등원) return false;
+        if (r.상태 === LOGST.취소됨) return false;
+        if (!r.출결시각 || fmtDate_(r.출결시각) !== day) return false;
+        return subjectsOverlap_(normalizeSubjectFilter_(r.과목), beforeSubjects);
+      });
+
+      if (!others.length) {
+        // 출석부를 못 건드려도 로그 수정은 진행한다.
+        // 여기서 멈추면 시각이 틀린 채로 남는다.
+        try {
+          unmarkAttendance_(target.이름, target.출결시각, MARK.출석, beforeSubjects);
+        } catch (e) { /* 무시 */ }
+      }
+    }
+  }
+
+  var patch = {};
+  patch[LOG_COL.입력시각] = fmtStamp_(next.enteredAt);
+  patch[LOG_COL.출결시각] = fmtStamp_(next.at);
+  patch[LOG_COL.상태] = LOGST.수정됨;
+  patch[LOG_COL.기기] = next.device.label;
+  patch[LOG_COL.과목] = next.subjectText;
+  patch[LOG_COL.비고] = next.note;
+  updateLogCells_(target.행, patch);
+
+  // 아직 안 나간 알림은 새 시각으로 나가야 한다.
+  // 이미 나갔으면 그대로 둔다 — 보호자에게 같은 내용이 두 번 갈 이유가 없다.
+  if (target.발송상태 === SENDST.대기) {
+    markSendResult_(target.행, next.sendState, '', '', '');
+  }
+
+  appendHistory_({
+    대상기록ID: target.기록ID,
+    작업: '재기록',
+    필드: '출결시각',
+    이전값: beforeAt,
+    이후값: fmtStamp_(next.at),
+    수행자: next.device.label,
+    사유: '앱에서 같은 구분을 다시 눌러 덮어씀'
+  });
 }
 
 /** 기록ID 로 로그 행 번호를 찾는다. */

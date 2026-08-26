@@ -612,7 +612,8 @@
     // 되돌아올 때 쓸 원본. 시트가 닫혀도 이 값은 살아 있다.
     var again = {
       student: s, at: new Date(at.getTime()), subjects: subjects.slice(),
-      notify: notify, adminTicket: adminTicket, pin: pin
+      notify: notify, adminTicket: adminTicket, pin: pin,
+      replaceId: ctx ? ctx.replaceId : ''
     };
 
     var payload = {
@@ -624,6 +625,8 @@
       force: !!force,
       adminTicket: adminTicket,
       notify: notify,
+      // 중복 확인에서 받은 기록ID. 새 줄을 만들지 않고 그 줄을 고친다.
+      replaceId: (ctx && ctx.replaceId) || '',
       subjects: subjects.slice(),
       clientId: s.id + '|' + kind + '|' + toLocalIso(at) +
         (subjects.length ? '|' + subjects.join(',') : '')
@@ -667,6 +670,8 @@
 
       if (res.needsRegister) { showRegister(res.message); return; }
       if (res.needsConfirm) {
+        // 서버가 알려준 기록을 고치는 것이지 새로 남기는 게 아니다
+        again.replaceId = res.replaceId || '';
         askConfirm(res.message, function () { submit(kind, true, again); });
         return;
       }
