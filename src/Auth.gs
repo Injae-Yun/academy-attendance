@@ -197,10 +197,17 @@ function verifyAdminTicket_(token, ticket) {
   return true;
 }
 
-/** 티켓이 언제까지 유효한가 (ms). 유효하지 않으면 0. */
+/**
+ * 티켓이 언제까지 유효한가 (ms). 유효하지 않으면 0.
+ *
+ * 만료 시각을 값에 담기 전에 발급된 티켓이 캐시에 남아 있을 수 있다.
+ * 그때 0 을 돌려주면 화면이 "남은 시간 0분" 으로 보고 곧바로 다시 잠근다.
+ * 유효한 티켓이라면 최소한 기본 창은 준다.
+ */
 function adminTicketUntil_(token, ticket) {
   if (!verifyAdminTicket_(token, ticket)) return 0;
-  return readAdminTicket_(ticket).until;
+  var v = readAdminTicket_(ticket);
+  return v.until || (now_().getTime() + ADMIN_TICKET_MIN * 60000);
 }
 
 /** 관리자 모드를 즉시 해제한다. */

@@ -568,20 +568,52 @@
 
   /* ── 기록 ────────────────────────────────────────────────── */
 
-  function submit(kind, force) {
-    var s = state.sheetStudent;
-    if (!s) return;
+  /**
+   * 출결을 보낸다.
+   *
+   * ctx 를 받는 이유가 중요하다. 아래에서 서버 응답을 기다리기 전에 시트를 닫는데,
+   * closeSheet() 가 state.sheetStudent 와 state.customAt 을 비운다.
+   * 그래서 서버가 "이미 기록이 있습니다. 다시 기록할까요?" 를 돌려주고 사용자가
+   * 확인을 눌러도, 그때의 submit 은 학생을 못 찾아 조용히 끝나거나
+   * 고른 시각 대신 지금 시각을 보내버렸다.
+   *
+   * 보낼 내용을 처음에 통째로 떠서 재시도에 그대로 넘긴다.
+   */
+  function submit(kind, force, ctx) {
+    var s, at, subjects, notify, adminTicket, pin;
 
-    var at = targetTime();
-    at.setSeconds(0, 0);
+    if (ctx) {
+      s = ctx.student;
+      at = new Date(ctx.at.getTime());
+      subjects = ctx.subjects.slice();
+      notify = ctx.notify;
+      adminTicket = ctx.adminTicket;
+      pin = ctx.pin;
+    } else {
+      s = state.sheetStudent;
+      if (!s) return;
+
+      at = targetTime();
+      at.setSeconds(0, 0);
+      subjects = state.pickedSubjects.slice();
+      notify = isAdminActive() ? !!state.notify : true;
+      adminTicket = isAdminActive() ? state.adminTicket : '';
+
+      var needPin = state.device && state.device.mode === 'kiosk' && s.hasPin;
+      pin = needPin ? $('sheetPin').value.trim() : '';
+      if (needPin && !pin) {
+        showSheetMsg('학생 PIN 을 입력해주세요.');
+        return;
+      }
+    }
+
     var atText = hhmm(at);
 
-    var needPin = state.device && state.device.mode === 'kiosk' && s.hasPin;
-    var pin = needPin ? $('sheetPin').value.trim() : '';
-    if (needPin && !pin) {
-      showSheetMsg('학생 PIN 을 입력해주세요.');
-      return;
-    }
+    // 되돌아올 때 쓸 원본. 시트가 닫혀도 이 값은 살아 있다.
+    var again = {
+      student: s, at: new Date(at.getTime()), subjects: subjects.slice(),
+      notify: notify, adminTicket: adminTicket, pin: pin
+    };
 
     var payload = {
       token: state.token,
@@ -590,11 +622,11 @@
       atIso: toLocalIso(at),
       pin: pin,
       force: !!force,
-      adminTicket: isAdminActive() ? state.adminTicket : '',
-      notify: isAdminActive() ? !!state.notify : true,
-      subjects: state.pickedSubjects.slice(),
+      adminTicket: adminTicket,
+      notify: notify,
+      subjects: subjects.slice(),
       clientId: s.id + '|' + kind + '|' + toLocalIso(at) +
-        (state.pickedSubjects.length ? '|' + state.pickedSubjects.join(',') : '')
+        (subjects.length ? '|' + subjects.join(',') : '')
     };
 
     // 낙관적 UI — 화면을 먼저 갱신하고 저장은 백그라운드로.
@@ -612,8 +644,8 @@
     closeSheet();
     renderRoster();
     var subjNote = (s.subjects && s.subjects.length > 1 &&
-      state.pickedSubjects.length < s.subjects.length)
-      ? ' (' + state.pickedSubjects.join('·') + ')' : '';
+      subjects.length < s.subjects.length)
+      ? ' (' + subjects.join('·') + ')' : '';
     toast(s.name + subjNote + ' ' + kind + ' ' +
       (isToday ? atText : (ymd(at).slice(5).replace('-', '/') + ' ' + atText)));
 
@@ -634,8 +666,21 @@
       if (isToday) rollback(s.id, kind, previous);
 
       if (res.needsRegister) { showRegister(res.message); return; }
-      if (res.needsConfirm) { askConfirm(res.message, function () { submit(kind, true); }); return; }
-      if (res.needsPin) { openSheet(s); showSheetMsg(res.message); return; }
+      if (res.needsConfirm) {
+        askConfirm(res.message, function () { submit(kind, true, again); });
+        return;
+      }
+      if (res.needsPin) {
+        // 시트를 다시 열면 고른 시각·과목이 초기화되므로 되돌려 놓는다
+        openSheet(s);
+        state.customAt = new Date(again.at.getTime());
+        state.pickedSubjects = again.subjects.slice();
+        renderSubjectPick();
+        renderAdminPick();
+        updateSheetTimes();
+        showSheetMsg(res.message);
+        return;
+      }
       toast(res.message, true);
     }).catch(function () {
       if (isToday) clearPending(s.id, kind);

@@ -53,6 +53,15 @@
     <button id="addBtn" class="add-btn">＋ 기록 추가</button>
   </div>
 
+  <div class="searchrow">
+    <div class="searchbox">
+      <input id="recSearch" type="search" placeholder="이름 또는 초성으로 찾기 (예: ㅎㄱㄷ)"
+             autocomplete="off">
+      <button id="recSearchClear" class="clear-x hidden" title="지우기">×</button>
+    </div>
+    <span id="recCount" class="rec-count"></span>
+  </div>
+
   <div class="content-scroll">
     <div id="recordList" class="record-list"></div>
     <div id="emptyDay" class="empty hidden">이 날짜에는 기록이 없습니다.</div>

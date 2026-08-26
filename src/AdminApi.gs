@@ -51,6 +51,7 @@ function adminBootstrap(token, ticket) {
   }
 
   base.needsUnlock = false;
+  base.minutes = ADMIN_TICKET_MIN;
   // 태블릿에서 티켓을 넘겨받아 들어온 경우, 남은 시간을 여기서 알려줘야
   // 상단 카운트다운이 0 분으로 시작해 곧바로 잠기는 일이 없다.
   //
