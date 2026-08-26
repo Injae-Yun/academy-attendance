@@ -1009,12 +1009,10 @@
    * 오늘, 그것도 얼마 안 지난 기록이면 평소처럼 보낸다.
    */
   function defaultNotify() {
-    if (!isAdminActive()) return true;
-    var at = targetTime();
-    var now = nowServer();
-    if (ymd(at) !== ymd(now)) return false;
-    var backMin = (now.getTime() - at.getTime()) / 60000;
-    return backMin <= state.limits.소급최대분;
+    // 관리자 모드는 빠뜨린 것을 몰아 넣는 자리다. 오늘 것이라도 이미 지난
+    // 일이라 보호자에게 알릴 이유가 없고, 켜져 있으면 한 건씩 끄면서
+    // 넣어야 해서 오히려 방해가 된다. 필요하면 그 건만 눌러서 켠다.
+    return !isAdminActive();
   }
 
   function renderNotifyToggle() {
@@ -1022,14 +1020,12 @@
     btn.classList.toggle('on', !!state.notify);
     $('notifyBox').textContent = state.notify ? '✓' : '';
 
-    var at = targetTime();
-    var otherDay = ymd(at) !== ymd(nowServer());
     $('notifyLabel').textContent = state.notify
       ? '보호자에게 알림을 보냅니다'
       : '보호자에게 알림을 보내지 않습니다';
-    $('notifyHint').textContent = otherDay
-      ? '지난 날짜(' + ymd(at).slice(5).replace('-', '/') + ') 기록이라 기본은 끔입니다.'
-      : (state.notify ? '눌러서 끌 수 있습니다.' : '눌러서 켤 수 있습니다.');
+    $('notifyHint').textContent = state.notify
+      ? '눌러서 끌 수 있습니다.'
+      : '관리자 모드에서는 기본이 끔입니다. 이 건만 보내려면 누르세요.';
   }
 
   /** 바텀시트의 날짜·시각 직접 입력 영역 */
