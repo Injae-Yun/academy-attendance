@@ -546,7 +546,7 @@ function protectMessageTemplates_() {
   var rows = [];
   keys.forEach(function (r, i) {
     var k = String(r[0]).trim();
-    if (k === '문구_등원' || k === '문구_하원') rows.push(i + 2);
+    if (k === '문구') rows.push(i + 2);
   });
   if (!rows.length) return;
 

@@ -31,8 +31,10 @@ function getProvider_() {
 function TestProvider_() {
   return {
     name: 'test',
-    sendAlimtalk: function (to, templateId, vars, fallbackText) {
+    sendAlimtalk: function (to, templateId, vars, body, fallbackText) {
       Logger.log('[테스트 알림톡] ' + to + ' / ' + templateId + ' / ' + JSON.stringify(vars));
+      Logger.log('  본문: ' + body);
+      Logger.log('  폴백: ' + fallbackText);
       return { ok: true, channel: '테스트(알림톡)', messageId: 'TEST-' + Utilities.getUuid().slice(0, 8) };
     },
     sendSms: function (to, text) {
@@ -54,40 +56,43 @@ function TestProvider_() {
  * @return {{text, vars, bytes, fits, shortened}}
  */
 function buildMessage_(academy, name, kind, at) {
-  var vars = {
-    '#{학원명}': academy,
-    '#{학생명}': name,
-    '#{일자}': fmtShortDate_(at),
-    '#{시각}': fmtTime_(at)
-  };
+  var template = messageTemplate_();
+  var word = KIND_WORD[kind] || KIND_WORD[KIND.등원];
 
-  var template = messageTemplate_(kind);
-
-  var build = function (aca) {
-    return applyVars_(template, {
+  var varsFor = function (aca) {
+    return {
       '#{학원명}': aca,
       '#{학생명}': name,
-      '#{일자}': fmtShortDate_(at),
-      '#{시각}': fmtTime_(at)
-    });
+      '#{일자}': fmtDotDate_(at),
+      '#{시각}': fmtTime_(at),
+      '#{구분}': word
+    };
   };
 
-  var fitted = fitSmsText_(build, academy);
+  // 알림톡 본문. 심사 통과한 문구 그대로 나가야 하므로 손대지 않는다.
+  var text = applyVars_(template, varsFor(academy));
+
+  // SMS 본문. 이모지를 걷어낸 뒤 90바이트에 맞춰 본다.
+  // 90바이트 제한은 SMS 에만 있다 — 알림톡을 여기에 맞출 이유가 없다.
+  var buildSms = function (aca) {
+    return stripEmoji_(applyVars_(template, varsFor(aca)));
+  };
+  var fitted = fitSmsText_(buildSms, academy);
+
   return {
-    text: fitted.text,
+    text: text,
+    sms: fitted.text,
     template: template,
-    vars: vars,
+    vars: varsFor(academy),
     bytes: fitted.bytes,
     fits: fitted.fits,
     shortened: fitted.shortened
   };
 }
 
-/** 구분에 맞는 문구 틀. 설정이 비어 있으면 기본 문구를 쓴다. */
-function messageTemplate_(kind) {
-  var key = (kind === KIND.하원) ? '문구_하원' : '문구_등원';
-  var fallback = (kind === KIND.하원) ? MSG_DEFAULT_OUT : MSG_DEFAULT_IN;
-  return str_(setting_(key)) || fallback;
+/** 문구 틀. 설정이 비어 있으면 기본 문구를 쓴다. */
+function messageTemplate_() {
+  return str_(setting_('문구')) || MSG_DEFAULT;
 }
 
 /** #{변수} 를 실제 값으로 바꾼다. */
@@ -99,7 +104,7 @@ function applyVars_(template, vars) {
   return out;
 }
 
-var MSG_VARIABLES = ['#{학원명}', '#{학생명}', '#{일자}', '#{시각}'];
+var MSG_VARIABLES = ['#{학원명}', '#{학생명}', '#{일자}', '#{시각}', '#{구분}'];
 
 /**
  * 문구가 쓸 만한지 본다.
@@ -118,6 +123,9 @@ function validateTemplate_(template) {
   if (t.indexOf('#{시각}') === -1) {
     problems.push('#{시각} 이 없습니다. 출결 시각이 빠집니다.');
   }
+  if (t.indexOf('#{구분}') === -1) {
+    problems.push('#{구분} 이 없습니다. 등원과 하원 알림이 똑같이 나갑니다.');
+  }
 
   // 우리가 모르는 변수를 쓰면 그대로 문자로 나간다
   var unknown = [];
@@ -132,9 +140,9 @@ function validateTemplate_(template) {
   return { ok: problems.length === 0, problems: problems, unknown: unknown };
 }
 
-/** 구분에 맞는 알림톡 템플릿 코드 */
-function templateFor_(kind) {
-  return str_(setting_(kind === KIND.하원 ? '템플릿ID_하원' : '템플릿ID_등원'));
+/** 알림톡 템플릿 코드. 등·하원이 #{구분} 으로 갈리므로 한 벌만 쓴다. */
+function templateFor_() {
+  return str_(setting_('템플릿ID'));
 }
 
 /* ── 한 건 발송 ───────────────────────────────────────────────────── */
@@ -151,17 +159,19 @@ function templateFor_(kind) {
 function sendOne_(provider, academy, student, log) {
   var msg = buildMessage_(academy, log.이름, log.구분, log.출결시각);
   var to = student.보호자연락처;
-  var templateId = templateFor_(log.구분);
+  var templateId = templateFor_();
   var useAlimtalk = !!templateId && !!str_(setting_('발신프로필키'));
 
   if (useAlimtalk) {
-    var res = provider.sendAlimtalk(to, templateId, msg.vars, msg.text);
+    // 폴백 본문은 이모지를 걷어낸 쪽으로 넘긴다.
+    // 대행사가 알림톡 실패 시 이 문장을 SMS 로 그대로 보낸다.
+    var res = provider.sendAlimtalk(to, templateId, msg.vars, msg.text, msg.sms);
     if (res.ok) return res;
 
     if (!settingBool_('SMS폴백사용')) {
       return { ok: false, channel: '알림톡', messageId: '', error: res.error || '알림톡 발송 실패' };
     }
-    var sms = provider.sendSms(to, msg.text);
+    var sms = provider.sendSms(to, msg.sms);
     if (sms.ok) {
       sms.channel = sms.channel + ' (알림톡 대체)';
       return sms;
@@ -171,9 +181,9 @@ function sendOne_(provider, academy, student, log) {
 
   // 알림톡 준비 전이면 SMS 로만 보낸다
   if (!msg.fits) {
-    Logger.log('문구가 ' + msg.bytes + '바이트라 LMS 로 나갑니다: ' + msg.text);
+    Logger.log('문구가 ' + msg.bytes + '바이트라 LMS 로 나갑니다: ' + msg.sms);
   }
-  return provider.sendSms(to, msg.text);
+  return provider.sendSms(to, msg.sms);
 }
 
 /* ── 큐 처리 ──────────────────────────────────────────────────────── */
@@ -341,40 +351,45 @@ function checkMessagingSetup() {
   lines.push('  발신번호: ' + (from ? formatPhone_(from) : '없음 ✗ (사전등록한 번호를 넣어주세요)'));
 
   var pf = str_(setting_('발신프로필키'));
-  var tIn = str_(setting_('템플릿ID_등원'));
-  var tOut = str_(setting_('템플릿ID_하원'));
-  if (pf && tIn && tOut) {
-    lines.push('  알림톡: 사용 (발신프로필 + 템플릿 2종 설정됨)');
+  var tid = str_(setting_('템플릿ID'));
+  if (pf && tid) {
+    lines.push('  알림톡: 사용 (발신프로필 + 템플릿 설정됨)');
   } else {
     lines.push('  알림톡: 미사용 → SMS 로만 발송합니다');
     if (!pf) lines.push('    · 발신프로필키 없음');
-    if (!tIn) lines.push('    · 등원 템플릿 없음');
-    if (!tOut) lines.push('    · 하원 템플릿 없음');
+    if (!tid) lines.push('    · 템플릿ID 없음');
   }
   lines.push('  SMS 폴백: ' + (settingBool_('SMS폴백사용') ? '사용' : '미사용'));
 
   // 문구를 검사하고 실제로 나갈 모습을 보여준다
   lines.push('');
-  lines.push('[문구]  _출결_설정 시트의 문구_등원 / 문구_하원 에서 고칩니다');
+  var template = messageTemplate_();
+  var check = validateTemplate_(template);
+
+  lines.push('[문구]  _출결_설정 시트의 "문구" 한 칸에서 고칩니다 (등·하원 공용)');
   lines.push('  쓸 수 있는 변수: ' + MSG_VARIABLES.join(' '));
+  lines.push('  틀: ' + template.split('\n').join(' ⏎ '));
+  check.problems.forEach(function (msg) { lines.push('  ! ' + msg); });
 
   [KIND.등원, KIND.하원].forEach(function (kind) {
-    var template = messageTemplate_(kind);
-    var check = validateTemplate_(template);
     var sample = buildMessage_(getAcademyName_(), '남궁철수', kind, now_());
+    var stripped = sample.text !== sample.sms;
 
     lines.push('');
-    lines.push('  · ' + kind + ' 틀: ' + template);
-    lines.push('    실제 발송: ' + sample.text);
+    lines.push('  · ' + kind + ' (#{구분} → ' + (KIND_WORD[kind] || '') + ')');
+    lines.push('    알림톡: ' + sample.text.split('\n').join(' ⏎ '));
+    lines.push('    SMS  : ' + sample.sms.split('\n').join(' ⏎ '));
     lines.push('    ' + sample.bytes + '바이트 — ' +
       (sample.fits ? 'SMS 1건으로 나갑니다' : '90바이트 초과 → LMS 단가 3배'));
+    if (stripped) {
+      lines.push('    (SMS 는 EUC-KR 이라 이모지를 빼고 보냅니다)');
+    }
     if (sample.shortened) {
       lines.push('    ! 90바이트에 맞추려고 학원명을 줄였습니다.');
     }
-    check.problems.forEach(function (msg) { lines.push('    ! ' + msg); });
   });
 
-  if (pf && tIn && tOut) {
+  if (pf && tid) {
     lines.push('');
     lines.push('  ! 알림톡을 쓰는 중입니다. 문구를 바꾸면 심사 통과한 템플릿과');
     lines.push('    글자가 달라져 발송이 거부될 수 있습니다.');

@@ -71,9 +71,14 @@ function SolapiProvider_() {
 
     /**
      * 알림톡. SMS 폴백을 같은 요청에 실어 보낸다.
+     *
+     * 알림톡 본문은 카카오가 templateId + variables 로 만들므로 body 는 쓰지 않는다.
+     * message.text 는 폴백으로 나갈 SMS 본문이다.
+     *
+     * @param {string} body         알림톡 본문 (솔라피에서는 쓰지 않는다)
      * @param {string} fallbackText 알림톡이 막혔을 때 대신 갈 SMS 본문
      */
-    sendAlimtalk: function (to, templateId, vars, fallbackText) {
+    sendAlimtalk: function (to, templateId, vars, body, fallbackText) {
       var message = {
         to: normalizePhone_(to),
         from: from,

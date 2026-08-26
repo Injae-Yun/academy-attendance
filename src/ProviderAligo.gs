@@ -53,15 +53,19 @@ function AligoProvider_() {
   return {
     name: 'aligo',
 
-    sendAlimtalk: function (to, templateId, vars, fallbackText) {
+    /**
+     * @param {string} body         알림톡 본문. 심사 통과한 템플릿과 글자까지 같아야 한다
+     * @param {string} fallbackText 알림톡이 막혔을 때 대신 갈 SMS 본문 (이모지 없음)
+     */
+    sendAlimtalk: function (to, templateId, vars, body, fallbackText) {
       var bad = missingCreds();
       if (bad) return bad;
 
       var t = issueToken();
       if (!t.ok) return { ok: false, error: t.error };
 
-      // 알림톡 본문은 템플릿과 글자까지 같아야 한다.
-      // 우리 템플릿은 SMS 문안과 동일하게 심사받으므로 그대로 쓴다.
+      // 알리고는 알림톡 본문을 직접 실어 보내고 템플릿과 대조한다.
+      // 이모지를 걷어낸 SMS 본문을 여기 넣으면 글자가 달라 거부된다.
       var params = {
         apikey: apiKey,
         userid: userId,
@@ -71,7 +75,7 @@ function AligoProvider_() {
         sender: from,
         receiver_1: normalizePhone_(to),
         subject_1: '출결 알림',
-        message_1: fallbackText,
+        message_1: body,
         testMode: 'N'
       };
 

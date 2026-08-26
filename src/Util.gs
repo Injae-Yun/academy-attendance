@@ -24,9 +24,14 @@ function fmtStamp_(d) {
   return Utilities.formatDate(d, TZ, 'yyyy-MM-dd HH:mm:ss');
 }
 
-/** Date → 'M/d' (문자 메시지용. 앞자리 0 을 빼서 바이트를 아낀다) */
+/** Date → 'M/d' (앞자리 0 을 빼서 바이트를 아낀다) */
 function fmtShortDate_(d) {
   return Utilities.formatDate(d, TZ, 'M/d');
+}
+
+/** Date → 'yy.MM.dd' (알림톡 문구용) */
+function fmtDotDate_(d) {
+  return Utilities.formatDate(d, TZ, 'yy.MM.dd');
 }
 
 /**
@@ -246,6 +251,46 @@ function byteLengthEucKr_(s) {
     n += s.charCodeAt(i) > 0x7f ? 2 : 1;
   }
   return n;
+}
+
+/**
+ * SMS 로 보낼 수 없는 문자를 걷어낸다.
+ *
+ * 알림톡은 이모지를 받지만 국내 SMS/LMS 는 EUC-KR 기준이라 표현할 수 없다.
+ * 그대로 보내면 대행사에 따라 '?' 로 치환되거나 전송이 거부된다.
+ *
+ * 알림톡 문구와 SMS 문구를 따로 두지 않고 여기서 걷어내는 이유는,
+ * 두 벌을 두면 한쪽만 고쳐 놓고 반드시 어긋나기 때문이다.
+ *
+ * ♩♪♬ 같은 기호는 EUC-KR(KS X 1001)에 들어 있지만, 대행사·단말마다
+ * 처리가 갈려 확실한 것만 남기고 나머지는 지운다. 덜 지우는 것보다
+ * 더 지우는 쪽이 안전하다 — 기호가 빠져도 뜻은 그대로다.
+ */
+function stripEmoji_(s) {
+  if (s === null || s === undefined) return '';
+  var out = '';
+
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+
+    // 서러게이트 페어 = BMP 밖 = EUC-KR 에 없다 (🎶 🍀 등)
+    if (c >= 0xd800 && c <= 0xdbff) { i++; continue; }
+    if (c >= 0xdc00 && c <= 0xdfff) continue;      // 짝 잃은 뒷자리
+
+    if (c === 0x200d) continue;                    // ZWJ (이모지 결합)
+    if (c >= 0xfe00 && c <= 0xfe0f) continue;      // 변형 선택자 (️ 등)
+    if (c >= 0x2600 && c <= 0x27bf) continue;      // 기타 기호·딩벳 (✨ ☀ ✔)
+    if (c >= 0x2b00 && c <= 0x2bff) continue;      // 화살표·도형
+    if (c >= 0x1f00 && c <= 0x1fff) continue;      // 그리스 확장 (거의 안 쓰인다)
+
+    out += s.charAt(i);
+  }
+
+  // 문자가 빠지며 생긴 겹공백과 줄 끝 공백을 정리한다
+  return out
+    .split('\n')
+    .map(function (line) { return line.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+$/, ''); })
+    .join('\n');
 }
 
 var SMS_MAX_BYTES = 90;
