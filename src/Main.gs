@@ -27,6 +27,7 @@ function onOpen() {
     .addSubMenu(ui.createMenu('발송')
       .addItem('발송 설정 열기', 'menuOpenSettings')
       .addItem('발송 설정 점검', 'menuCheckMessaging')
+      .addItem('수신거부 링크 만들기', 'menuOptoutSample')
       .addItem('지금 발송 처리', 'menuProcessQueue')
       .addItem('실패 건 재시도', 'menuRetryFailed'))
     .addSeparator()
@@ -283,6 +284,68 @@ function showAdminUrl() {
     withParam_(w.url, 'page=admin'),
     '기기 등록이 된 태블릿·PC 에서 열어야 하며, 관리자 PIN 을 한 번 더 입력합니다. ' +
     '인증은 30분간 유지됩니다.',
+    w.source === 'dev' ? DEV_URL_WARN : ''
+  );
+}
+
+/**
+ * 학생 한 명의 수신거부 링크를 실제 값으로 만들어 본다.
+ *
+ * 알림톡 버튼에 등록하는 것은 #{수신거부키} 가 들어간 틀이라 그대로는 열리지
+ * 않는다. 심사 전에 화면을 확인하거나, 보호자가 "링크를 못 받았다" 할 때
+ * 여기서 만들어 전달한다.
+ */
+function menuOptoutSample() {
+  applyProbedLayout_();
+
+  var ui = SpreadsheetApp.getUi();
+  var w = webAppUrl_();
+  if (!w.url) { showNoUrl_('수신거부 링크'); return; }
+
+  var res = ui.prompt(
+    '수신거부 링크 만들기',
+    '학생 이름을 입력하세요.\n비워 두면 명부의 첫 번째 재원생으로 만듭니다.',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+
+  var name = String(res.getResponseText() || '').trim().replace(/\s/g, '');
+  var 재원 = readStudents_().filter(function (s) { return s.상태 === ST.재원; });
+
+  var hit = name
+    ? 재원.filter(function (s) {
+        return str_(s.표시명 || s.이름).replace(/\s/g, '') === name ||
+               str_(s.이름).replace(/\s/g, '') === name;
+      })
+    : 재원.slice(0, 1);
+
+  if (!hit.length) {
+    showReport_('수신거부 링크',
+      '"' + name + '" 을(를) 재원생 명부에서 찾을 수 없습니다.\n\n' +
+      '표시명(동명이인 접미사 포함)으로도 찾아봅니다. ' +
+      '이름을 다시 확인하거나 [명부 동기화] 를 먼저 실행해주세요.');
+    return;
+  }
+  if (hit.length > 1) {
+    showReport_('수신거부 링크',
+      '"' + name + '" 이(가) ' + hit.length + '명입니다.\n\n' +
+      hit.map(function (s) { return '  ' + (s.표시명 || s.이름) + '  (' + s.학생ID + ')'; }).join('\n') +
+      '\n\n표시명을 그대로 입력해주세요.');
+    return;
+  }
+
+  var s = hit[0];
+  var display = s.표시명 || s.이름;
+  var url = withParam_(w.url, 'page=optout&k=' + encodeURIComponent(optoutKey_(s.학생ID)));
+
+  showUrlDialog_(
+    '수신거부 링크',
+    '<b>' + escapeHtml_(display) + '</b> 학생의 실제 링크입니다. ' +
+    '휴대폰에서 열면 보호자가 보는 화면이 그대로 나옵니다.',
+    url,
+    '이 링크는 만료되지 않습니다. 알림톡 버튼에 등록할 때는 ' +
+    '이 주소가 아니라 #{수신거부키} 가 들어간 틀을 넣으세요 — ' +
+    '[발송 설정 점검] 에 나옵니다.',
     w.source === 'dev' ? DEV_URL_WARN : ''
   );
 }
