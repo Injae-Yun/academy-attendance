@@ -177,6 +177,14 @@ button { cursor: pointer; border: none; background: none; }
 }
 .chip.on { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
 
+/* 보기 탭 — 과목 칩과 섞이지 않게 위에 한 줄로 둔다 */
+.view-tabs { padding-bottom: 4px; }
+.view-tabs .chip { min-width: 76px; justify-content: center; text-align: center; }
+.view-note {
+  padding: 0 16px 8px;
+  font-size: 13px; color: var(--ink-soft);
+}
+
 /* ── 명부 ──────────────────────────────────────────────────── */
 
 .content { flex: 1; display: flex; min-height: 0; }

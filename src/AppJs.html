@@ -27,6 +27,7 @@
     limits: { 소급최대분: 120, 중복차단분: 10, 단위분: 5 },
     query: '',
     subject: '',
+    view: 'all',           // all | in(오늘 출석) | out(아직 하원 안 함)
     sheetStudent: null,
     customAt: null,        // 사용자가 고른 출결 시각 (null 이면 '지금')
     notify: true,          // 관리자 모드에서 보호자 알림을 보낼지
@@ -328,10 +329,24 @@
 
   /* ── 명부 렌더 ───────────────────────────────────────────── */
 
+  /** 오늘 이 학생의 등·하원 시각 */
+  function attOf(s) { return state.attendance[s.id] || {}; }
+
+  function cameToday(s) { return !!attOf(s)['등원']; }
+  /** 왔는데 아직 안 간 학생. 하원 처리가 남았다는 뜻이다. */
+  function stillHere(s) { var a = attOf(s); return !!a['등원'] && !a['하원']; }
+
+  function matchesView(s) {
+    if (state.view === 'in') return cameToday(s);
+    if (state.view === 'out') return stillHere(s);
+    return true;
+  }
+
   function visibleStudents() {
     var q = state.query.trim();
     var qc = chosung(q);
     return state.students.filter(function (s) {
+      if (!matchesView(s)) return false;
       if (state.subject && s.subject !== state.subject) return false;
       if (!q) return true;
       return s.name.indexOf(q) !== -1 || (s.chosung || '').indexOf(qc) !== -1;
@@ -344,9 +359,56 @@
       $('deviceTag').textContent = state.device.label +
         ' · ' + (state.device.mode === 'kiosk' ? '키오스크' : '직원');
     }
+    renderViewTabs();
     renderChips();
     renderRoster();
     renderQueueBadge();
+  }
+
+  /**
+   * 오늘 누가 왔고 누가 아직 안 갔는지 보는 탭.
+   *
+   * 학원 사람이 확인하는 용도라 키오스크(학생용)에서는 감춘다.
+   * 인원 수가 드러나서이기도 하고, 현관에서 학생이 볼 화면도 아니다.
+   */
+  function renderViewTabs() {
+    var box = $('viewTabs');
+    var note = $('viewNote');
+    var kiosk = state.device && state.device.mode === 'kiosk';
+
+    if (kiosk) {
+      box.classList.add('hidden');
+      note.classList.add('hidden');
+      if (state.view !== 'all') { state.view = 'all'; }
+      return;
+    }
+    box.classList.remove('hidden');
+    box.innerHTML = '';
+
+    var inCount = state.students.filter(cameToday).length;
+    var outCount = state.students.filter(stillHere).length;
+
+    [
+      { key: 'all', label: '명부', count: null },
+      { key: 'in', label: '출석', count: inCount },
+      { key: 'out', label: '하원', count: outCount }
+    ].forEach(function (t) {
+      var b = document.createElement('button');
+      b.className = 'chip' + (state.view === t.key ? ' on' : '');
+      b.textContent = t.label + (t.count === null ? '' : ' ' + t.count);
+      b.addEventListener('click', function () {
+        state.view = t.key;
+        render();
+      });
+      box.appendChild(b);
+    });
+
+    // '하원' 만으로는 하원한 사람인지 남은 사람인지 알 수 없다
+    var text = '';
+    if (state.view === 'in') text = '오늘 등원한 학생 ' + inCount + '명';
+    if (state.view === 'out') text = '아직 하원하지 않은 학생 ' + outCount + '명';
+    note.textContent = text;
+    note.classList.toggle('hidden', !text);
   }
 
   function renderChips() {
@@ -382,6 +444,12 @@
     box.innerHTML = '';
 
     $('emptyState').classList.toggle('hidden', list.length > 0);
+    // 검색이 없는데 비었다면 검색 결과 얘기가 아니다
+    $('emptyState').textContent =
+      state.query ? '검색 결과가 없습니다.'
+      : state.view === 'in' ? '오늘 등원한 학생이 아직 없습니다.'
+      : state.view === 'out' ? '모두 하원했습니다.'
+      : '표시할 학생이 없습니다.';
 
     // 키오스크(학생용)에서는 인원 수를 보여주지 않는다.
     // 학생이 현관에서 볼 화면에 학원 규모가 드러날 이유가 없다.
@@ -407,7 +475,15 @@
       $('statusCount').textContent = parts.join(' · ');
     }
 
-    // 가나다순으로 묶는다
+    // 출석·하원 보기는 온 순서로 본다.
+    // 누가 오래 남아 있는지, 누구 하원 처리가 밀렸는지는 시각순이라야 보인다.
+    if (state.view !== 'all') {
+      box.appendChild(timeList(list));
+      renderRail({});
+      return;
+    }
+
+    // 명부는 가나다순으로 묶는다
     var groups = {};
     list.slice().sort(function (a, b) {
       return a.name.localeCompare(b.name, 'ko');
@@ -434,6 +510,28 @@
     });
 
     renderRail(present);
+  }
+
+  /**
+   * 온 순서로 늘어놓는다.
+   *
+   * 가나다순은 명부를 훑을 때나 쓸모 있다. "누가 아직 안 갔나" 를 볼 때는
+   * 먼저 온 사람이 위에 있어야 오래 남아 있는 학생이 눈에 띈다.
+   */
+  function timeList(list) {
+    var wrap = document.createElement('div');
+    wrap.className = 'group-grid';
+
+    list.slice().sort(function (a, b) {
+      var ta = attOf(a)['등원'] || '';
+      var tb = attOf(b)['등원'] || '';
+      if (ta !== tb) return ta < tb ? -1 : 1;
+      return a.name.localeCompare(b.name, 'ko');
+    }).forEach(function (s) {
+      wrap.appendChild(studentCard(s));
+    });
+
+    return wrap;
   }
 
   function studentCard(s) {
