@@ -14,6 +14,7 @@ var TRIGGER_HANDLERS = [
   'processMessageQueue',
   'dailySync',
   'monthlyRebuild',
+  'hourlyCatchUp',
   'onSheetEdit'
 ];
 
@@ -28,6 +29,7 @@ function installTriggers() {
   ScriptApp.newTrigger('processMessageQueue').timeBased().everyMinutes(1).create();
   ScriptApp.newTrigger('dailySync').timeBased().atHour(4).everyDays(1).create();
   ScriptApp.newTrigger('monthlyRebuild').timeBased().onMonthDay(1).atHour(5).create();
+  ScriptApp.newTrigger('hourlyCatchUp').timeBased().everyHours(1).create();
   ScriptApp.newTrigger('onSheetEdit').forSpreadsheet(ss).onEdit().create();
 
   return [
@@ -36,6 +38,7 @@ function installTriggers() {
     '  1분마다   · 발송 큐 처리',
     '  매일 04시 · 명부 동기화',
     '  매월 1일 05시 · 출석부 재생성',
+    '  1시간마다 · 새 학생 따라잡기 (출석부 · 수강료 이월)',
     '  시트 편집 · 출석부 연/월 변경 감지'
   ].join('\n');
 }

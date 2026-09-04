@@ -13,6 +13,9 @@ function onOpen() {
     .addSeparator()
     .addItem('명부 동기화', 'menuSyncRoster')
     .addItem('출석부 재생성', 'menuRebuildAttendbook')
+    .addSubMenu(ui.createMenu('수강료')
+      .addItem('이월 미리보기 (변경 없음)', 'menuTuitionPreview')
+      .addItem('이월 실행', 'menuTuitionApply'))
     .addItem('정합성 점검', 'menuCheckConsistency')
     .addSeparator()
     .addSubMenu(ui.createMenu('지출 관리')
@@ -83,6 +86,26 @@ function menuRebuildAttendbook() {
 
 function menuCheckConsistency() {
   showReport_('정합성 점검', checkConsistency());
+}
+
+function menuTuitionPreview() {
+  showReport_('수강료 이월 (미리보기)', syncTuition(null, null, false).report);
+}
+
+function menuTuitionApply() {
+  var ui = SpreadsheetApp.getUi();
+  var res = ui.alert(
+    '수강료 이월',
+    [
+      '수강료(누적) 시트의 기준 연/월에 맞춰 학생 줄을 만듭니다.',
+      '',
+      '이미 있는 줄은 건드리지 않습니다. 결제일·교재비는 비워 둡니다.',
+      '먼저 [이월 미리보기] 로 대상을 확인하셨나요?'
+    ].join('\n'),
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (res !== ui.Button.OK) return;
+  showReport_('수강료 이월', syncTuition(null, null, true).report);
 }
 
 function menuProbeLayout() {
