@@ -944,6 +944,28 @@ src/
   Brand.html                                   학원 로고 (선택, git 제외)
 ```
 
+### ⚠ push 는 프로젝트를 통째로 맞춥니다
+
+`clasp push` 는 Apps Script 프로젝트를 로컬 `src/` 와 **똑같이** 만듭니다.
+로컬에 없는 파일은 **말없이 지워집니다.**
+
+이 스프레드시트는 시판 템플릿이라 원래 딸려 온 매크로가 있었는데
+(수강료 이월 `copyScheduleToLog` 등) 첫 push 때 그게 사라졌습니다.
+Apps Script 편집기에서 손으로 만든 파일도 마찬가지입니다.
+
+그래서 `npm run push` 는 올리기 전에 **원격에만 있는 파일**을 찾아 멈춥니다.
+
+```
+원격에만 있는 파일이 1개 있습니다. push 하면 지워집니다.
+
+    copyScheduleToLog
+
+  남기려면 그 내용을 src/ 에 파일로 옮긴 뒤 다시 push 하세요.
+  지우는 게 맞다면: npm run push -- --allow-delete
+```
+
+**남겨야 할 코드는 반드시 `src/` 안에 두세요.** 편집기에만 있으면 다음 push 때 없어집니다.
+
 > **파일 이름은 확장자를 뺀 상태로 유일해야 합니다.**
 > Apps Script 는 `Admin.gs` 와 `Admin.html` 을 같은 이름으로 보고 push 를 거부합니다
 > (`A file with this name already exists`). 그래서 서버 파일은 `AdminApi.gs` 입니다.
@@ -952,7 +974,7 @@ src/
 템플릿 버전이 달라 행이 밀려도 조용히 엉뚱한 칸을 건드리지 않게 하기 위함입니다.
 
 ```bash
-npm run push            # 이름 검사 후 업로드
+npm run push            # 검사 후 업로드
 npm run brand -- <파일>  # 학원 로고 심기
 npx clasp logs --watch  # 실행 로그
 ```
