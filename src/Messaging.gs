@@ -412,6 +412,76 @@ function checkProviderAuth() {
   return lines.join('\n');
 }
 
+/** 나가는 IP 를 알려주는 곳들. 하나가 죽어도 다음 것으로 넘어간다. */
+var IP_ECHO_URLS = [
+  'https://checkip.amazonaws.com',
+  'https://api.ipify.org',
+  'https://ifconfig.me/ip'
+];
+
+/**
+ * 이 스크립트가 밖으로 나갈 때 쓰는 IP 를 알아본다.
+ *
+ * 알리고는 등록된 IP 에서 온 호출만 받는데, 대역을 /24 단위로 적을 수 있다면
+ * 실제로 어느 대역에서 나가는지가 중요하다. 몇 번 재 보면 그 값이 고정인지
+ * 매번 바뀌는지 눈으로 알 수 있다.
+ *
+ * 짐작으로 등록해 두고 현관에서 실패를 발견하는 것보다 낫다.
+ *
+ * @param {number=} times 몇 번 재 볼지 (기본 5)
+ */
+function checkOutboundIp(times) {
+  var n = times || 5;
+  var seen = [];
+  var prefixes = {};
+
+  for (var i = 0; i < n; i++) {
+    var ip = '';
+    for (var u = 0; u < IP_ECHO_URLS.length && !ip; u++) {
+      try {
+        var res = UrlFetchApp.fetch(IP_ECHO_URLS[u], { muteHttpExceptions: true });
+        if (res.getResponseCode() === 200) {
+          var body = String(res.getContentText()).trim();
+          var m = body.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+          if (m) ip = m[1];
+        }
+      } catch (e) { /* 다음 곳으로 */ }
+    }
+    if (!ip) { seen.push('(못 읽음)'); continue; }
+    seen.push(ip);
+    prefixes[ip.split('.').slice(0, 3).join('.') + '.'] = true;
+  }
+
+  var uniqueIps = {};
+  seen.forEach(function (v) { if (v.indexOf('.') !== -1) uniqueIps[v] = true; });
+
+  var ipList = Object.keys(uniqueIps);
+  var prefixList = Object.keys(prefixes);
+
+  var lines = ['[발신 IP 확인]', ''];
+  lines.push('  ' + n + '번 재 봤습니다:');
+  seen.forEach(function (v, i2) { lines.push('    ' + (i2 + 1) + '. ' + v); });
+  lines.push('');
+  lines.push('  서로 다른 IP ' + ipList.length + '개 · /24 대역 ' + prefixList.length + '개');
+
+  if (prefixList.length) {
+    lines.push('');
+    lines.push('  나온 대역:');
+    prefixList.forEach(function (p) { lines.push('    ' + p); });
+  }
+
+  lines.push('');
+  if (prefixList.length === 1) {
+    lines.push('  이번에는 한 대역에서만 나갔습니다. 그렇다고 늘 그렇다는 뜻은 아닙니다.');
+    lines.push('  구글이 IP 를 언제든 바꿀 수 있으니, 등록하더라도 발송 실패를');
+    lines.push('  가끔 확인해 주세요.');
+  } else {
+    lines.push('  대역이 여러 개입니다. 몇 개를 등록해도 다음에 다른 대역에서');
+    lines.push('  나갈 수 있습니다. IP 등록으로는 해결되지 않습니다.');
+  }
+  return lines.join('\n');
+}
+
 /**
  * 발송 설정이 제대로 되어 있는지 점검한다. 실제로 보내지 않는다.
  * @return {string} 리포트

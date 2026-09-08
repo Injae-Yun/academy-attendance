@@ -31,6 +31,7 @@ function onOpen() {
       .addItem('발송 설정 열기', 'menuOpenSettings')
       .addItem('발송 설정 점검', 'menuCheckMessaging')
       .addItem('공급사 연결 확인', 'menuCheckProvider')
+      .addItem('발신 IP 확인', 'menuCheckOutboundIp')
       .addItem('수신거부 링크 만들기', 'menuOptoutSample')
       .addItem('지금 발송 처리', 'menuProcessQueue')
       .addItem('실패 건 재시도', 'menuRetryFailed'))
@@ -205,6 +206,10 @@ function menuCheckMessaging() {
 
 function menuCheckProvider() {
   showReport_('공급사 연결 확인', checkProviderAuth());
+}
+
+function menuCheckOutboundIp() {
+  showReport_('발신 IP 확인', checkOutboundIp(5));
 }
 
 function menuProcessQueue() {
