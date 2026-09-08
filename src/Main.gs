@@ -34,6 +34,10 @@ function onOpen() {
       .addItem('발신 IP 확인', 'menuCheckOutboundIp')
       .addItem('트리거 IP 확인', 'menuIpTrial')
       .addItem('알리고 진단', 'menuDiagnoseAligo')
+      .addSeparator()
+      .addItem('시험 발송 — 등원', 'menuTestSendIn')
+      .addItem('시험 발송 — 하원', 'menuTestSendOut')
+      .addSeparator()
       .addItem('수신거부 링크 만들기', 'menuOptoutSample')
       .addItem('지금 발송 처리', 'menuProcessQueue')
       .addItem('실패 건 재시도', 'menuRetryFailed'))
@@ -220,6 +224,45 @@ function menuCheckOutboundIp() {
  * 메뉴로 재면 사람이 눌러서 도는 것이라, 트리거가 도는 새벽과
  * 같은 IP 라는 보장이 없다. 알리고에 등록할 IP 는 트리거 쪽이다.
  */
+function menuTestSendIn() { testSendFlow_(KIND.등원); }
+function menuTestSendOut() { testSendFlow_(KIND.하원); }
+
+/**
+ * 원장 휴대폰으로 한 건 보내 본다.
+ *
+ * 학생이 태블릿을 누를 때와 같은 경로를 탄다. 실제 요금이 드는 일이라
+ * 번호를 눈으로 확인하고 한 번 더 묻는다.
+ */
+function testSendFlow_(kind) {
+  var ui = SpreadsheetApp.getUi();
+  var suggested = str_(setting_('테스트수신번호'));
+
+  var ask = ui.prompt(
+    '시험 발송 — ' + kind,
+    '받을 번호를 넣으세요. 하이픈은 있어도 없어도 됩니다.' +
+    (suggested ? '\n\n비워두면 테스트수신번호(' + suggested + ') 로 갑니다.' : ''),
+    ui.ButtonSet.OK_CANCEL);
+  if (ask.getSelectedButton() !== ui.Button.OK) return;
+
+  var to = str_(ask.getResponseText()) || suggested;
+  if (!to) {
+    ui.alert('번호가 없습니다.');
+    return;
+  }
+
+  var provider = String(setting_('공급사') || 'test').toLowerCase();
+  var warn = (provider === 'test')
+    ? '공급사가 test 라 실제로는 나가지 않고 로그만 남습니다.'
+    : '실제로 문자가 나갑니다. 요금 1건이 듭니다.';
+
+  var go = ui.alert('시험 발송 — ' + kind,
+    formatPhone_(normalizePhone_(to)) + ' 로 보냅니다.\n\n' + warn + '\n\n계속할까요?',
+    ui.ButtonSet.YES_NO);
+  if (go !== ui.Button.YES) return;
+
+  showReport_('시험 발송 — ' + kind, sendTestMessage(to, kind));
+}
+
 function menuIpTrial() {
   showReport_('트리거 IP 확인', ipTrialStart());
 }

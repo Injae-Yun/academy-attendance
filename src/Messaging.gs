@@ -247,6 +247,18 @@ function sendOne_(provider, academy, student, log) {
  * 이 값이 켜져 있으면 보호자는 아무것도 받지 못한다. 켜 두고 잊으면
  * 발송이 되는 줄 알고 지나가게 되므로, 점검 화면들이 크게 알린다.
  */
+/**
+ * 자동 발송을 할지. 기본은 켬.
+ *
+ * 출결 기능을 시험하는 동안 학생이 태블릿을 누를 때마다 요금이 나가면
+ * 마음 놓고 시험할 수 없다. 이 스위치는 그 자동 발송만 끈다.
+ * 메뉴의 [시험 발송] 은 사람이 직접 누르는 것이라 그대로 나간다.
+ */
+function sendingEnabled_() {
+  var raw = str_(setting_('발송사용'));
+  return raw === '' ? true : settingBool_('발송사용');
+}
+
 function testRecipient_() {
   var raw = str_(setting_('테스트수신번호'));
   return raw ? normalizePhone_(raw) : '';
@@ -286,6 +298,19 @@ function processMessageQueue() {
 
     if (!pending.length) {
       return { sent: 0, failed: 0, skipped: 0, report: '발송할 건이 없습니다.' };
+    }
+
+    // 자동 발송 스위치. 나중에 한꺼번에 터지지 않도록 대기로 두지 않고
+    // 그 자리에서 미발송으로 확정한다. 며칠 뒤 몰아서 나가면 곤란하다.
+    if (!sendingEnabled_()) {
+      pending.forEach(function (log) {
+        markSendResult_(log.행, SENDST.꺼짐, '', '', '');
+      });
+      return {
+        sent: 0, failed: 0, skipped: pending.length,
+        report: pending.length + '건을 미발송(발송끔) 으로 남겼습니다. ' +
+          '_출결_설정 의 발송사용 이 FALSE 입니다.'
+      };
     }
 
     var provider = getProvider_();
@@ -432,6 +457,12 @@ function checkProviderAuth() {
 
   // 공급사가 더 알아낸 것이 있으면 그대로 붙인다
   (res.details || []).forEach(function (d) { lines.push('    ' + d); });
+
+  if (!sendingEnabled_()) {
+    lines.push('');
+    lines.push('  ! 발송사용 이 꺼져 있어 자동 발송은 나가지 않습니다.');
+    lines.push('    메뉴의 [시험 발송] 만 나갑니다.');
+  }
 
   var test = testRecipient_();
   if (test) {
@@ -614,6 +645,85 @@ function ipTrialRead_() {
 }
 
 /**
+ * 실제로 한 건 보내 본다. 원장 휴대폰으로 확인하는 용도다.
+ *
+ * 학생이 태블릿을 누를 때와 **같은 경로**로 보낸다. 시험용 경로를 따로
+ * 두면 그 경로만 통과하고 정작 실제 발송은 막히는 일이 생긴다.
+ * 알림톡 시도 → 거절되면 문자, 문구 조립, 수신거부 링크까지 그대로다.
+ *
+ * 남는 것: 로그에는 쓰지 않는다. 출결 기록이 아니기 때문이다.
+ * 드는 것: 실제 요금 1건.
+ *
+ * @param {string} to   받을 번호
+ * @param {string} kind 등원 또는 하원
+ * @return {string} 리포트
+ */
+function sendTestMessage(to, kind) {
+  applyProbedLayout_();
+
+  var target = normalizePhone_(str_(to));
+  var lines = ['[시험 발송]'];
+
+  if (!target) {
+    return lines.concat(['', '  ✗ 받을 번호가 없습니다.']).join('\n');
+  }
+  if (kind !== KIND.등원 && kind !== KIND.하원) kind = KIND.등원;
+
+  var provider = getProvider_();
+  var academy = getAcademyName_();
+  var at = now_();
+
+  // 실제 학생 이름을 쓰지 않는다. 시험 문자를 받은 사람이
+  // 그 아이에게 무슨 일이 생긴 줄 알면 곤란하다.
+  var log = { 이름: TEST_SEND_NAME, 구분: kind, 출결시각: at, 학생ID: 'TEST' };
+  var student = { 보호자연락처: target };
+
+  var msg = buildMessage_(academy, log.이름, kind, at, log.학생ID);
+  var redirect = testRecipient_();
+
+  lines.push('  공급사: ' + provider.name);
+  lines.push('  구분: ' + kind);
+  if (!sendingEnabled_()) {
+    lines.push('  (발송사용 은 꺼져 있지만 이 시험은 그대로 나갑니다)');
+  }
+  lines.push('  받는 번호: ' + formatPhone_(redirect || target));
+  if (redirect && redirect !== target) {
+    lines.push('    ! 테스트수신번호가 켜져 있어 ' + formatPhone_(target) + ' 대신');
+    lines.push('      위 번호로 갑니다.');
+  }
+  lines.push('');
+
+  var res;
+  try {
+    res = sendOne_(provider, academy, student, log);
+  } catch (e) {
+    return lines.concat(['  ✗ 발송 중 오류: ' + e.message]).join('\n');
+  }
+
+  if (res && res.ok) {
+    lines.push('  ✓ 보냈습니다 — ' + (res.channel || ''));
+    if (res.messageId) lines.push('    메시지ID ' + res.messageId);
+    lines.push('');
+    lines.push('  휴대폰을 확인하세요. 1분 안에 오지 않으면 대행사 콘솔의');
+    lines.push('  발송 내역에서 상태를 보세요.');
+  } else {
+    lines.push('  ✗ 실패 — ' + ((res && res.error) || '알 수 없는 오류'));
+    lines.push('');
+    lines.push('  [공급사 연결 확인] 과 [발송 설정 점검] 을 먼저 보세요.');
+  }
+
+  // 실제로 나간 모습을 함께 보여준다. 눈으로 대조할 수 있어야 한다.
+  lines.push('');
+  lines.push('[보낸 문구]');
+  lines.push('  알림톡 ' + msg.bytes + '바이트');
+  msg.text.split('\n').forEach(function (t) { lines.push('    ' + t); });
+  lines.push('  문자');
+  msg.sms.split('\n').forEach(function (t) { lines.push('    ' + t); });
+
+  return lines.join('\n');
+}
+
+/**
  * 저장된 인증값의 상태. '설정됨' 은 값이 있다는 뜻일 뿐이라,
  * 문자열 'undefined' 가 박혀 있어도 있다고 나온다. 그 경우를 갈라 본다.
  */
@@ -666,6 +776,16 @@ function checkMessagingSetup() {
     if (!tOut) lines.push('    · 템플릿ID_하원 없음');
   }
   lines.push('  SMS 폴백: ' + (settingBool_('SMS폴백사용') ? '사용' : '미사용'));
+
+  if (!sendingEnabled_()) {
+    lines.push('');
+    lines.push('  ##############################################');
+    lines.push('  #  발송사용 이 꺼져 있습니다');
+    lines.push('  #  학생이 눌러도 알림이 나가지 않습니다.');
+    lines.push('  #  기록은 미발송(발송끔) 으로 남습니다.');
+    lines.push('  #  메뉴의 [시험 발송] 은 이 값과 무관하게 나갑니다.');
+    lines.push('  ##############################################');
+  }
 
   // 켜 두고 잊으면 보호자는 아무것도 받지 못한다. 눈에 띄어야 한다.
   var test = testRecipient_();
