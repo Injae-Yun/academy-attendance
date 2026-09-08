@@ -11,6 +11,89 @@ var ALIGO_SMS_ENDPOINT = 'https://apis.aligo.in/send/';
 var ALIGO_TOKEN_ENDPOINT = 'https://kakaoapi.aligo.in/akv10/token/create/30/s/';
 var ALIGO_ATALK_ENDPOINT = 'https://kakaoapi.aligo.in/akv10/alimtalk/send/';
 
+/** 잔여건수 조회. 아무것도 보내지 않으면서 문자 API 인증만 확인할 수 있다. */
+var ALIGO_REMAIN_ENDPOINT = 'https://apis.aligo.in/remain/';
+
+/**
+ * 알리고가 어디서 막는지 가려낸다. 아무것도 보내지 않는다.
+ *
+ * 알림톡(kakaoapi.aligo.in)과 문자(apis.aligo.in)는 서로 다른 서비스다.
+ * 둘 다 막히면 IP·키 문제이고, 문자만 통과하면 알림톡 쪽 설정 문제다.
+ * 그 둘을 갈라 봐야 어디를 고칠지 알 수 있다.
+ *
+ * @return {string} 리포트
+ */
+function diagnoseAligo() {
+  applyProbedLayout_();
+
+  var props = PropertiesService.getScriptProperties();
+  var apiKey = props.getProperty(SECRET_KEY.aligoApiKey);
+  var userId = props.getProperty(SECRET_KEY.aligoUserId);
+
+  var lines = ['[알리고 진단]', ''];
+  if (!apiKey || !userId) {
+    lines.push('  인증정보가 없습니다.');
+    lines.push("  setProviderSecrets('aligo', 'API키', '알리고아이디') 를 먼저 실행하세요.");
+    return lines.join('\n');
+  }
+  lines.push('  아이디: ' + userId);
+  lines.push('  API키 : ' + apiKey.slice(0, 4) + '…' + apiKey.slice(-4) +
+    ' (' + apiKey.length + '자)');
+
+  var ip = outboundIp_();
+  lines.push('  나가는 IP: ' + (ip || '(못 읽음)'));
+  lines.push('');
+
+  /** 한 곳을 두드려 보고 날것 그대로 적는다. */
+  function probe(label, url, params) {
+    lines.push('  · ' + label);
+    lines.push('    ' + url);
+    try {
+      var res = UrlFetchApp.fetch(url, {
+        method: 'post', payload: params, muteHttpExceptions: true
+      });
+      var code = res.getResponseCode();
+      var body = String(res.getContentText()).trim();
+      lines.push('    HTTP ' + code);
+      lines.push('    응답: ' + body.slice(0, 300));
+
+      var json = {};
+      try { json = JSON.parse(body); } catch (e) { /* JSON 이 아닐 수 있다 */ }
+      var okCode = (String(json.code) === '0' || String(json.result_code) === '1');
+      lines.push('    판정: ' + (okCode ? '통과' : '거부'));
+      return okCode;
+    } catch (e) {
+      lines.push('    호출 실패: ' + e.message);
+      return false;
+    }
+  }
+
+  var smsOk = probe('문자 API (잔여건수 조회)', ALIGO_REMAIN_ENDPOINT,
+    { key: apiKey, user_id: userId });
+  lines.push('');
+  var atalkOk = probe('알림톡 API (토큰 발급)', ALIGO_TOKEN_ENDPOINT,
+    { apikey: apiKey, userid: userId });
+
+  lines.push('');
+  lines.push('  ── 읽는 법 ──');
+  if (smsOk && atalkOk) {
+    lines.push('  둘 다 통과입니다. 발송을 시도해도 됩니다.');
+  } else if (smsOk && !atalkOk) {
+    lines.push('  문자는 통과하는데 알림톡만 막힙니다.');
+    lines.push('  IP 는 문제가 아닙니다 — 같은 IP 로 문자는 통과했습니다.');
+    lines.push('  알림톡 서비스가 아직 열리지 않았거나, 알림톡 쪽에 IP 를');
+    lines.push('  따로 등록해야 할 수 있습니다. 알리고에 이 화면을 보여주고');
+    lines.push('  "문자는 되는데 알림톡 토큰 발급만 막힌다" 고 문의하세요.');
+  } else if (!smsOk && !atalkOk) {
+    lines.push('  둘 다 막힙니다. IP 나 키·아이디 문제일 가능성이 큽니다.');
+    lines.push('  알리고 [발송 서버 IP] 에 위 "나가는 IP" 가 있는지 확인하세요.');
+  } else {
+    lines.push('  알림톡은 되는데 문자가 막힙니다. 흔치 않은 경우입니다.');
+    lines.push('  알림톡만 쓰신다면 그대로 진행해도 됩니다.');
+  }
+  return lines.join('\n');
+}
+
 function AligoProvider_() {
   var props = PropertiesService.getScriptProperties();
   var apiKey = props.getProperty(SECRET_KEY.aligoApiKey);
