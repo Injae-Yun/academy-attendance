@@ -61,23 +61,43 @@ function diagnoseAligo() {
       try { json = JSON.parse(body); } catch (e) { /* JSON 이 아닐 수 있다 */ }
       var okCode = (String(json.code) === '0' || String(json.result_code) === '1');
       lines.push('    판정: ' + (okCode ? '통과' : '거부'));
-      return okCode;
+      return { ok: okCode, json: json };
     } catch (e) {
       lines.push('    호출 실패: ' + e.message);
-      return false;
+      return { ok: false, json: {} };
     }
   }
 
-  var smsOk = probe('문자 API (잔여건수 조회)', ALIGO_REMAIN_ENDPOINT,
+  var sms = probe('문자 API (잔여건수 조회)', ALIGO_REMAIN_ENDPOINT,
     { key: apiKey, user_id: userId });
+  var smsOk = sms.ok;
+
+  // 잔액이 0 이면 인증이 통과해도 실제 발송에서 막힌다.
+  // 조회한 김에 같이 보여준다.
+  if (smsOk) {
+    var cnt = sms.json.SMS_CNT;
+    if (cnt !== undefined) {
+      lines.push('    남은 문자: SMS ' + cnt +
+        (sms.json.LMS_CNT !== undefined ? ' · LMS ' + sms.json.LMS_CNT : '') + '건');
+      if (Number(cnt) === 0) {
+        lines.push('    ! 잔액이 0 입니다. 충전해야 실제로 나갑니다.');
+      }
+    }
+  }
+
   lines.push('');
-  var atalkOk = probe('알림톡 API (토큰 발급)', ALIGO_TOKEN_ENDPOINT,
+  var atalk = probe('알림톡 API (토큰 발급)', ALIGO_TOKEN_ENDPOINT,
     { apikey: apiKey, userid: userId });
+  var atalkOk = atalk.ok;
 
   lines.push('');
   lines.push('  ── 읽는 법 ──');
+  lines.push('  잔액이 0 이어도 여기 두 호출은 통과합니다. 인증만 보기 때문입니다.');
+  lines.push('  거부가 떴다면 잔액이 아니라 다른 이유입니다.');
+  lines.push('');
+
   if (smsOk && atalkOk) {
-    lines.push('  둘 다 통과입니다. 발송을 시도해도 됩니다.');
+    lines.push('  둘 다 통과입니다. 남은 것은 충전과 실제 발송뿐입니다.');
   } else if (smsOk && !atalkOk) {
     lines.push('  문자는 통과하는데 알림톡만 막힙니다.');
     lines.push('  IP 는 문제가 아닙니다 — 같은 IP 로 문자는 통과했습니다.');
