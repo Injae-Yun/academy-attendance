@@ -420,6 +420,23 @@ var IP_ECHO_URLS = [
 ];
 
 /**
+ * 지금 나가는 IP 하나. 못 읽으면 빈 문자열.
+ *
+ * 알리고가 IP 를 거부했을 때 "그럼 지금 IP 가 뭔데" 를 바로 알려주려고 쓴다.
+ */
+function outboundIp_() {
+  for (var i = 0; i < IP_ECHO_URLS.length; i++) {
+    try {
+      var res = UrlFetchApp.fetch(IP_ECHO_URLS[i], { muteHttpExceptions: true });
+      if (res.getResponseCode() !== 200) continue;
+      var m = String(res.getContentText()).match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+      if (m) return m[1];
+    } catch (e) { /* 다음 곳으로 */ }
+  }
+  return '';
+}
+
+/**
  * 이 스크립트가 밖으로 나갈 때 쓰는 IP 를 알아본다.
  *
  * 알리고는 등록된 IP 에서 온 호출만 받는데, 대역을 /24 단위로 적을 수 있다면
