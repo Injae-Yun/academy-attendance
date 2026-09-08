@@ -105,8 +105,16 @@ function diagnoseAligo() {
     lines.push('  따로 등록해야 할 수 있습니다. 알리고에 이 화면을 보여주고');
     lines.push('  "문자는 되는데 알림톡 토큰 발급만 막힌다" 고 문의하세요.');
   } else if (!smsOk && !atalkOk) {
-    lines.push('  둘 다 막힙니다. IP 나 키·아이디 문제일 가능성이 큽니다.');
-    lines.push('  알리고 [발송 서버 IP] 에 위 "나가는 IP" 가 있는지 확인하세요.');
+    lines.push('  둘 다 막힙니다. 문자·알림톡 공통이니 IP 나 키 문제입니다.');
+    lines.push('');
+    lines.push('  1) 알리고 [발송 서버 IP] 에 위 "나가는 IP" 가 있는지');
+    lines.push('  2) 있다면, 그 IP 행에 적힌 발급키가 지금 쓰는 키와 같은지');
+    lines.push('     알리고는 IP 마다 키를 따로 내줍니다. 다른 IP 의 키로는');
+    lines.push('     IP 를 새로 등록해도 계속 막힙니다.');
+    lines.push('     그 행의 키로 바꾸려면:');
+    lines.push("       setProviderSecrets('aligo', '그 행의 발급키', '" + userId + "')");
+    lines.push('  3) 둘 다 맞는데도 막히면 알리고에 이 화면을 그대로 보여주고');
+    lines.push('     "어느 IP 로 보이길래 막히는지" 물어보세요.');
   } else {
     lines.push('  알림톡은 되는데 문자가 막힙니다. 흔치 않은 경우입니다.');
     lines.push('  알림톡만 쓰신다면 그대로 진행해도 됩니다.');
