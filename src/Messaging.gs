@@ -404,10 +404,16 @@ function checkProviderAuth() {
     lines.push('  - ' + res.message);
   } else if (res.ok) {
     lines.push('  ✓ ' + res.message);
-    lines.push('');
-    lines.push('  인증은 통과했습니다. 템플릿 코드가 맞는지는 실제 발송으로 확인하세요.');
   } else {
     lines.push('  ✗ ' + res.message);
+  }
+
+  // 공급사가 더 알아낸 것이 있으면 그대로 붙인다
+  (res.details || []).forEach(function (d) { lines.push('    ' + d); });
+
+  if (res.checked && res.ok) {
+    lines.push('');
+    lines.push('  인증은 통과했습니다. 템플릿 코드가 맞는지는 실제 발송으로 확인하세요.');
   }
   return lines.join('\n');
 }

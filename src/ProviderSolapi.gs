@@ -11,6 +11,11 @@
 
 var SOLAPI_ENDPOINT = 'https://api.solapi.com/messages/v4/send';
 
+/* 인증만 보는 조회들. 어느 것도 발송을 일으키지 않는다. */
+var SOLAPI_BALANCE_ENDPOINT = 'https://api.solapi.com/cash/v1/balance';
+var SOLAPI_SENDERID_ENDPOINT = 'https://api.solapi.com/senderid/v1/numbers';
+var SOLAPI_CHANNEL_ENDPOINT = 'https://api.solapi.com/kakao/v2/channels';
+
 function SolapiProvider_() {
   var props = PropertiesService.getScriptProperties();
   var apiKey = props.getProperty(SECRET_KEY.solapiApiKey);
@@ -66,22 +71,96 @@ function SolapiProvider_() {
     };
   }
 
+  /** 인증만 보는 GET. 발송을 일으키지 않는다. */
+  function get(url) {
+    var res = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { Authorization: auth() },
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    var body = res.getContentText();
+    var json = {};
+    try { json = JSON.parse(body); } catch (e) { /* JSON 이 아닐 수 있다 */ }
+
+    if (code >= 200 && code < 300) return { ok: true, json: json, body: body };
+    return {
+      ok: false,
+      code: code,
+      body: body,
+      error: 'HTTP ' + code + ' ' +
+        (json.errorMessage || json.errorCode || body.slice(0, 200))
+    };
+  }
+
+  /**
+   * 발신번호가 솔라피에 등록돼 있는지 본다.
+   *
+   * 응답 모양이 바뀌어도 견디도록 본문에서 숫자만 찾는다. 목록의 형태를
+   * 맞히려다 틀리면, 등록돼 있는데도 없다고 겁을 주게 된다.
+   */
+  function checkSenderId() {
+    if (!from) return ['! 발신번호 설정이 비어 있습니다.'];
+
+    var r = get(SOLAPI_SENDERID_ENDPOINT);
+    if (!r.ok) return ['- 발신번호 목록을 못 읽었습니다 (' + r.error + ')'];
+
+    var digits = from.replace(/[^0-9]/g, '');
+    if (r.body.replace(/[^0-9]/g, '').indexOf(digits) !== -1) {
+      return ['발신번호 ' + from + ' 등록됨'];
+    }
+    return ['! 발신번호 ' + from + ' 가 등록 목록에 없습니다.',
+            '  솔라피 콘솔에서 사전등록을 마쳐야 발송됩니다.'];
+  }
+
+  /** 발신프로필키가 실제로 있는 채널인지. 비어 있으면 문자만 나간다. */
+  function checkChannel() {
+    if (!pfId) return ['- 발신프로필키가 비어 있어 문자로만 나갑니다.'];
+
+    var r = get(SOLAPI_CHANNEL_ENDPOINT);
+    if (!r.ok) return ['- 발신프로필 목록을 못 읽었습니다 (' + r.error + ')'];
+    if (r.body.indexOf(pfId) !== -1) return ['발신프로필 ' + pfId + ' 확인됨'];
+    return ['! 발신프로필키가 목록에 없습니다: ' + pfId];
+  }
+
   return {
     name: 'solapi',
 
     /**
-     * 솔라피는 인증만 보는 값싼 호출이 마땅치 않다.
-     * 없는 확인을 한 척하지 않고 그대로 알린다.
+     * 잔액 조회로 인증을 확인한다. 발송은 일어나지 않는다.
+     *
+     * 여기서 끝내지 않고 발신번호와 발신프로필까지 함께 본다. 알리고에서
+     * 겪었듯이, 인증이 통과해도 발신번호가 등록돼 있지 않으면 첫 등원에서야
+     * 실패를 발견한다. 미리 볼 수 있는 것은 미리 본다.
      */
     verify: function () {
       if (!apiKey || !apiSecret) {
         return { checked: true, ok: false, message: '솔라피 인증정보가 없습니다.' };
       }
-      return {
-        checked: false, ok: false,
-        message: '솔라피는 미리 확인할 방법이 없습니다. 실제 발송 1건으로 확인하세요.'
-      };
+
+      var bal = get(SOLAPI_BALANCE_ENDPOINT);
+      if (!bal.ok) {
+        return {
+          checked: true, ok: false,
+          message: '인증 실패 — ' + bal.error,
+          details: ['키와 시크릿을 다시 확인하세요.',
+                    'npm run secrets 로 만든 줄을 그대로 실행했는지 보세요.']
+        };
+      }
+
+      var details = [];
+      var money = Number(bal.json.balance || 0) + Number(bal.json.point || 0);
+      details.push('잔액 ' + money.toLocaleString() + '원');
+      if (money <= 0) details.push('! 잔액이 없습니다. 충전 전에는 발송이 거절됩니다.');
+
+      details = details.concat(checkSenderId());
+      details = details.concat(checkChannel());
+
+      return { checked: true, ok: true, message: '솔라피 인증 통과', details: details };
     },
+
+    /** 발신번호가 등록돼 있는지. 못 읽으면 없다고 단정하지 않는다. */
+    verifySender: function () { return checkSenderId(); },
 
     /**
      * 알림톡. SMS 폴백을 같은 요청에 실어 보낸다.
