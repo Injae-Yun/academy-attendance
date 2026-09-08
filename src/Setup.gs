@@ -546,7 +546,7 @@ function protectMessageTemplates_() {
   var rows = [];
   keys.forEach(function (r, i) {
     var k = String(r[0]).trim();
-    if (k === '문구') rows.push(i + 2);
+    if (MSG_PROTECT_KEYS.indexOf(k) !== -1) rows.push(i + 2);
   });
   if (!rows.length) return;
 
@@ -563,6 +563,9 @@ function protectMessageTemplates_() {
       .setWarningOnly(true);
   });
 }
+
+/** 경고형 보호를 걸 문구 칸. 넷 다 심사 통과한 글자와 같아야 한다. */
+var MSG_PROTECT_KEYS = ['문구_등원', '문구_하원', '문자문구_등원', '문자문구_하원'];
 
 var MSG_PROTECT_DESC =
   '알림톡 사용 중에는 수정하지 마세요. 심사 통과한 템플릿과 글자가 다르면 발송이 거부됩니다.';
