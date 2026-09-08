@@ -5,5 +5,8 @@ node_modules/
 .DS_Store
 .omc/
 
+# 발송 인증정보. .env.example 만 올린다
+.env
+
 # 학원 로고는 저장소에 올리지 않는다 (clasp 은 .claspignore 규칙으로 push 한다)
 src/Brand.html

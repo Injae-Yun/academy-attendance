@@ -14,7 +14,8 @@
     "open": "clasp open",
     "logs": "clasp logs --watch",
     "check": "node scripts/check-names.js",
-    "brand": "node scripts/embed-brand.js"
+    "brand": "node scripts/embed-brand.js",
+    "secrets": "node scripts/secrets.js"
   },
   "devDependencies": {
     "@google/clasp": "^2.4.2"
