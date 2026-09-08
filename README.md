@@ -815,8 +815,17 @@ npm run secrets
   setProviderSecrets(…) 한 줄을 클립보드에 담았습니다.
 
   Apps Script 편집기에서:
-    1. 아무 파일에나 붙여넣고 그 줄만 실행
-    2. 실행되면 붙여넣은 줄을 지운다
+    1. 아무 .gs 파일 맨 아래에 이렇게 만들고
+         function saveKeys() {
+           <여기에 붙여넣기>
+         }
+    2. 함수 고르는 칸에서 saveKeys 를 골라 실행
+    3. 실행되면 saveKeys 를 통째로 지우고 저장
+
+  코드를 건드리기 싫으면 편집기 UI 로도 됩니다:
+    ⚙ 프로젝트 설정 → 스크립트 속성 → 속성 추가
+    SOLAPI_API_KEY      ← .env 의 SOLAPI_API_KEY
+    SOLAPI_API_SECRET   ← .env 의 SOLAPI_API_SECRET
 
   _출결_설정 시트에 넣을 값 (비밀 아님):
     공급사            solapi
@@ -829,8 +838,17 @@ npm run secrets
 **키는 화면에 찍히지 않습니다.** 앞뒤 네 자와 길이만 보여줘서 붙여넣은
 값이 맞는지 확인할 수 있게 합니다.
 
+**함수로 감싸는 게 중요합니다.** 그냥 한 줄만 두면 편집기의 함수
+목록에 `setProviderSecrets` 가 뜨는데, 그걸 실행하면 **인자 없이**
+돌아서 값이 `undefined` 로 저장됩니다.
+
 한 번 실행하면 끝입니다. **`npm run push` 나 새 배포로 지워지지
 않습니다.** Script Properties 는 코드와 별개로 남습니다.
+
+> **`.env` 를 읽어 자동으로 넣을 수는 없나?** `clasp run` 이 있긴 하지만
+> 전용 GCP 프로젝트·OAuth 클라이언트·API 실행 파일 배포를 따로 만들어야
+> 합니다. 평생 한두 번 하는 일에 그 설정을 얹을 값어치는 없습니다.
+> 위의 **스크립트 속성** UI 가 코드도 안 건드리고 더 빠릅니다.
 
 `.env` 에 `SENDER` · `PFID` · `TEMPLATE_IN` · `TEMPLATE_OUT` 도 적어두면
 **시트에 넣을 값** 목록을 함께 보여줍니다. 이쪽은 비밀이 아니라서

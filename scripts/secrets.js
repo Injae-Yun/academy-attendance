@@ -70,9 +70,17 @@ function toClipboard(text) {
   return null;
 }
 
+// prop 은 Script Properties 에 실제로 들어가는 이름이다.
+// 편집기 UI 로 직접 넣을 수도 있어서 함께 알려준다.
 const PROVIDERS = {
-  solapi: { key: 'SOLAPI_API_KEY', secret: 'SOLAPI_API_SECRET', secretLabel: 'API SECRET' },
-  aligo: { key: 'ALIGO_API_KEY', secret: 'ALIGO_USER_ID', secretLabel: '아이디' },
+  solapi: {
+    key: 'SOLAPI_API_KEY', secret: 'SOLAPI_API_SECRET', secretLabel: 'API SECRET',
+    keyProp: 'SOLAPI_API_KEY', secretProp: 'SOLAPI_API_SECRET',
+  },
+  aligo: {
+    key: 'ALIGO_API_KEY', secret: 'ALIGO_USER_ID', secretLabel: '아이디',
+    keyProp: 'ALIGO_API_KEY', secretProp: 'ALIGO_USER_ID',
+  },
 };
 
 if (!fs.existsSync(ENV_PATH)) {
@@ -118,9 +126,19 @@ if (where) {
 
 console.log('');
 console.log('  Apps Script 편집기에서:');
-console.log('    1. 아무 파일에나 붙여넣고 그 줄만 실행');
-console.log('    2. 실행되면 붙여넣은 줄을 지운다');
+console.log('    1. 아무 .gs 파일 맨 아래에 이렇게 만들고');
+console.log(`${DIM}         function saveKeys() {${OFF}`);
+console.log(`${DIM}           <여기에 붙여넣기>${OFF}`);
+console.log(`${DIM}         }${OFF}`);
+console.log('    2. 함수 고르는 칸에서 saveKeys 를 골라 실행');
+console.log('    3. 실행되면 saveKeys 를 통째로 지우고 저장');
 console.log(`${DIM}       값은 Script Properties 에 남는다. 코드에 남길 필요가 없다.${OFF}`);
+console.log('');
+console.log('  코드를 건드리기 싫으면 편집기 UI 로도 됩니다:');
+console.log('    ⚙ 프로젝트 설정 → 스크립트 속성 → 속성 추가');
+console.log(`    ${spec.keyProp}      ← .env 의 ${spec.key}`);
+console.log(`    ${spec.secretProp}   ← .env 의 ${spec.secret}`);
+console.log(`${DIM}       setProviderSecrets 는 이 두 줄을 대신 넣어주는 것뿐입니다.${OFF}`);
 
 // 비밀이 아닌 값은 시트로 간다. 어디에 무엇을 넣는지 헷갈리기 쉬워 함께 적는다.
 const fromEnv = [
