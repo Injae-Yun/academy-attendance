@@ -208,7 +208,12 @@ function templateFor_(kind) {
  */
 function sendOne_(provider, academy, student, log) {
   var msg = buildMessage_(academy, log.이름, log.구분, log.출결시각, log.학생ID);
-  var to = student.보호자연락처;
+
+  // 검증 중에는 보호자 대신 정해둔 한 번호로만 보낸다.
+  // 실수로 실제 보호자에게 시험 문자가 가는 일을 막는다.
+  var test = testRecipient_();
+  var to = test || student.보호자연락처;
+
   var templateId = templateFor_(log.구분);
   var useAlimtalk = !!templateId && !!str_(setting_('발신프로필키'));
 
@@ -216,7 +221,7 @@ function sendOne_(provider, academy, student, log) {
     // 폴백 본문은 이모지를 걷어낸 쪽으로 넘긴다.
     // 대행사가 알림톡 실패 시 이 문장을 SMS 로 그대로 보낸다.
     var res = provider.sendAlimtalk(to, templateId, msg.vars, msg.text, msg.sms);
-    if (res.ok) return res;
+    if (res.ok) return markTestSend_(res, test);
 
     if (!settingBool_('SMS폴백사용')) {
       return { ok: false, channel: '알림톡', messageId: '', error: res.error || '알림톡 발송 실패' };
@@ -224,7 +229,7 @@ function sendOne_(provider, academy, student, log) {
     var sms = provider.sendSms(to, msg.sms);
     if (sms.ok) {
       sms.channel = sms.channel + ' (알림톡 대체)';
-      return sms;
+      return markTestSend_(sms, test);
     }
     return { ok: false, channel: 'SMS', messageId: '', error: (res.error || '') + ' / ' + (sms.error || '') };
   }
@@ -233,7 +238,24 @@ function sendOne_(provider, academy, student, log) {
   if (!msg.fits) {
     Logger.log('문구가 ' + msg.bytes + '바이트라 LMS 로 나갑니다: ' + msg.sms);
   }
-  return provider.sendSms(to, msg.sms);
+  return markTestSend_(provider.sendSms(to, msg.sms), test);
+}
+
+/**
+ * 검증용 수신번호. 비어 있으면 평소대로 보호자에게 간다.
+ *
+ * 이 값이 켜져 있으면 보호자는 아무것도 받지 못한다. 켜 두고 잊으면
+ * 발송이 되는 줄 알고 지나가게 되므로, 점검 화면들이 크게 알린다.
+ */
+function testRecipient_() {
+  var raw = str_(setting_('테스트수신번호'));
+  return raw ? normalizePhone_(raw) : '';
+}
+
+/** 로그만 보고도 시험 발송이었는지 알 수 있게 표시를 남긴다. */
+function markTestSend_(res, test) {
+  if (test && res && res.ok) res.channel = (res.channel || '') + ' (테스트수신)';
+  return res;
 }
 
 /* ── 큐 처리 ──────────────────────────────────────────────────────── */
@@ -411,6 +433,13 @@ function checkProviderAuth() {
   // 공급사가 더 알아낸 것이 있으면 그대로 붙인다
   (res.details || []).forEach(function (d) { lines.push('    ' + d); });
 
+  var test = testRecipient_();
+  if (test) {
+    lines.push('');
+    lines.push('  ! 테스트수신번호가 켜져 있어 모든 알림이');
+    lines.push('    ' + formatPhone_(test) + ' 로만 갑니다. 보호자는 받지 못합니다.');
+  }
+
   if (res.checked && res.ok) {
     lines.push('');
     lines.push('  인증은 통과했습니다. 템플릿 코드가 맞는지는 실제 발송으로 확인하세요.');
@@ -585,6 +614,19 @@ function ipTrialRead_() {
 }
 
 /**
+ * 저장된 인증값의 상태. '설정됨' 은 값이 있다는 뜻일 뿐이라,
+ * 문자열 'undefined' 가 박혀 있어도 있다고 나온다. 그 경우를 갈라 본다.
+ */
+function secretState_(props, key) {
+  var v = str_(props.getProperty(key));
+  if (!v) return '없음 ✗';
+  if (v === 'undefined' || v === 'null') {
+    return v + ' 가 저장돼 있습니다 ✗ (인자 없이 실행한 흔적입니다)';
+  }
+  return '설정됨';
+}
+
+/**
  * 발송 설정이 제대로 되어 있는지 점검한다. 실제로 보내지 않는다.
  * @return {string} 리포트
  */
@@ -598,11 +640,11 @@ function checkMessagingSetup() {
   if (provider === 'test') {
     lines.push('  → 테스트 모드입니다. 실제로 발송되지 않고 로그만 남습니다.');
   } else if (provider === 'solapi') {
-    lines.push('  API 키: ' + (props.getProperty(SECRET_KEY.solapiApiKey) ? '설정됨' : '없음 ✗'));
-    lines.push('  API 시크릿: ' + (props.getProperty(SECRET_KEY.solapiApiSecret) ? '설정됨' : '없음 ✗'));
+    lines.push('  API 키: ' + secretState_(props, SECRET_KEY.solapiApiKey));
+    lines.push('  API 시크릿: ' + secretState_(props, SECRET_KEY.solapiApiSecret));
   } else if (provider === 'aligo') {
-    lines.push('  API 키: ' + (props.getProperty(SECRET_KEY.aligoApiKey) ? '설정됨' : '없음 ✗'));
-    lines.push('  사용자 ID: ' + (props.getProperty(SECRET_KEY.aligoUserId) ? '설정됨' : '없음 ✗'));
+    lines.push('  API 키: ' + secretState_(props, SECRET_KEY.aligoApiKey));
+    lines.push('  사용자 ID: ' + secretState_(props, SECRET_KEY.aligoUserId));
   } else {
     lines.push('  ! 알 수 없는 공급사입니다. test / solapi / aligo 중 하나여야 합니다.');
   }
@@ -624,6 +666,18 @@ function checkMessagingSetup() {
     if (!tOut) lines.push('    · 템플릿ID_하원 없음');
   }
   lines.push('  SMS 폴백: ' + (settingBool_('SMS폴백사용') ? '사용' : '미사용'));
+
+  // 켜 두고 잊으면 보호자는 아무것도 받지 못한다. 눈에 띄어야 한다.
+  var test = testRecipient_();
+  if (test) {
+    lines.push('');
+    lines.push('  ##############################################');
+    lines.push('  #  테스트수신번호가 켜져 있습니다');
+    lines.push('  #  모든 알림이 ' + formatPhone_(test) + ' 로만 갑니다.');
+    lines.push('  #  보호자는 아무것도 받지 못합니다.');
+    lines.push('  #  검증이 끝나면 _출결_설정 에서 비우세요.');
+    lines.push('  ##############################################');
+  }
 
   // 문구를 검사하고 실제로 나갈 모습을 보여준다
   lines.push('');

@@ -71,6 +71,23 @@ function SolapiProvider_() {
     };
   }
 
+  /**
+   * 저장된 값이 값답지 않은지 본다.
+   *
+   * 인자 없이 setProviderSecrets 를 실행하면 문자열 'undefined' 가 들어간다.
+   * 그러면 대행사는 "길이가 안 맞는다" 고만 답해서, 무엇을 잘못했는지
+   * 알아내는 데 시간이 걸린다.
+   */
+  function brokenValues() {
+    var bad = [];
+    [[SECRET_KEY.solapiApiKey, apiKey], [SECRET_KEY.solapiApiSecret, apiSecret]]
+      .forEach(function (pair) {
+        var v = str_(pair[1]);
+        if (v === 'undefined' || v === 'null') bad.push(pair[0] + ' = ' + v);
+      });
+    return bad;
+  }
+
   /** 인증만 보는 GET. 발송을 일으키지 않는다. */
   function get(url) {
     var res = UrlFetchApp.fetch(url, {
@@ -138,13 +155,25 @@ function SolapiProvider_() {
         return { checked: true, ok: false, message: '솔라피 인증정보가 없습니다.' };
       }
 
+      // 인자 없이 setProviderSecrets 를 돌리면 문자열 'undefined' 가 박힌다.
+      // 길이가 안 맞는다는 응답만 보고는 원인을 짐작하기 어려우니 먼저 짚는다.
+      var junk = brokenValues();
+      if (junk.length) {
+        return {
+          checked: true, ok: false,
+          message: '저장된 값이 망가져 있습니다: ' + junk.join(', '),
+          details: SECRET_HELP.concat([
+            '인자 없이 setProviderSecrets 를 실행하면 이렇게 저장됩니다.'
+          ])
+        };
+      }
+
       var bal = get(SOLAPI_BALANCE_ENDPOINT);
       if (!bal.ok) {
         return {
           checked: true, ok: false,
           message: '인증 실패 — ' + bal.error,
-          details: ['키와 시크릿을 다시 확인하세요.',
-                    'npm run secrets 로 만든 줄을 그대로 실행했는지 보세요.']
+          details: SECRET_HELP
         };
       }
 

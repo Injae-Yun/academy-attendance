@@ -34,6 +34,7 @@ function diagnoseAligo() {
   if (!apiKey || !userId) {
     lines.push('  인증정보가 없습니다.');
     lines.push("  setProviderSecrets('aligo', 'API키', '알리고아이디') 를 먼저 실행하세요.");
+    lines.push('  또는 ⚙ 프로젝트 설정 → 스크립트 속성 에서 직접 넣어도 됩니다.');
     return lines.join('\n');
   }
   lines.push('  아이디: ' + userId);
