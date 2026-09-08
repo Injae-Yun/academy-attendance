@@ -15,7 +15,9 @@ var TRIGGER_HANDLERS = [
   'dailySync',
   'monthlyRebuild',
   'hourlyCatchUp',
-  'onSheetEdit'
+  'onSheetEdit',
+  // 한 번 돌고 스스로 사라지지만, 중간에 멎었으면 여기서 걷어낸다
+  'ipTrialRun'
 ];
 
 /**

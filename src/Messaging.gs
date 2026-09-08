@@ -436,6 +436,56 @@ function outboundIp_() {
   return '';
 }
 
+/** 트리거가 본 IP 를 적어 두는 곳 */
+var IP_TRIAL_KEY = 'IP_TRIAL';
+
+/**
+ * 트리거가 어떤 IP 로 나가는지 재 본다.
+ *
+ * 메뉴로 재면 사람이 눌러서 도는 것이고, 실제 발송은 1분 트리거가 한다.
+ * 그때는 아무도 앉아 있지 않다. 둘이 같은 IP 인지 확인하지 않으면,
+ * 낮에는 되고 새벽에는 안 되는 상태를 모르고 지나칠 수 있다.
+ *
+ * 1분 뒤에 한 번 돌고 스스로 사라지는 트리거를 건다.
+ */
+function ipTrialStart() {
+  var props = PropertiesService.getScriptProperties();
+  props.deleteProperty(IP_TRIAL_KEY);
+  removeIpTrialTriggers_();
+
+  ScriptApp.newTrigger('ipTrialRun').timeBased().after(60 * 1000).create();
+
+  return [
+    '[트리거 IP 확인]',
+    '',
+    '  1분 뒤에 트리거가 한 번 돌면서 IP 를 적어 둡니다.',
+    '  잠시 뒤 [발신 IP 확인] 을 누르면 결과가 함께 나옵니다.',
+    '',
+    '  이 확인이 필요한 이유:',
+    '  실제 발송은 1분마다 도는 트리거가 합니다. 그때는 아무도 앉아',
+    '  있지 않습니다. 메뉴로 잰 IP 와 트리거가 쓰는 IP 가 다르면,',
+    '  알리고에 IP 를 등록해도 발송은 계속 막힙니다.'
+  ].join('\n');
+}
+
+/** 1분 뒤에 한 번 돌고 스스로 사라진다. */
+function ipTrialRun() {
+  var ip = '';
+  try { ip = outboundIp_(); } catch (e) { ip = ''; }
+
+  PropertiesService.getScriptProperties().setProperty(IP_TRIAL_KEY, JSON.stringify({
+    ip: ip,
+    at: fmtStamp_(now_())
+  }));
+  removeIpTrialTriggers_();
+}
+
+function removeIpTrialTriggers_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'ipTrialRun') ScriptApp.deleteTrigger(t);
+  });
+}
+
 /**
  * 이 스크립트가 밖으로 나갈 때 쓰는 IP 를 알아본다.
  *
@@ -496,7 +546,36 @@ function checkOutboundIp(times) {
     lines.push('  대역이 여러 개입니다. 몇 개를 등록해도 다음에 다른 대역에서');
     lines.push('  나갈 수 있습니다. IP 등록으로는 해결되지 않습니다.');
   }
+
+  // 실제 발송은 트리거가 한다. 메뉴로 잰 값만 보면 반쪽이다.
+  var trial = ipTrialRead_();
+  lines.push('');
+  if (!trial) {
+    lines.push('  [트리거 IP 는 아직 안 재봤습니다]');
+    lines.push('  발송은 사람이 아니라 1분 트리거가 합니다. 그때 어떤 IP 를');
+    lines.push('  쓰는지 따로 재야 합니다. 메뉴에서 [트리거 IP 확인] 을 누르고');
+    lines.push('  1분 뒤에 이 화면을 다시 보세요.');
+  } else {
+    lines.push('  [트리거가 본 IP] ' + (trial.ip || '(못 읽음)'));
+    lines.push('  잰 시각: ' + trial.at);
+    if (trial.ip && ipList.length === 1 && trial.ip === ipList[0]) {
+      lines.push('  방금 잰 값과 같습니다.');
+    } else if (trial.ip) {
+      lines.push('  방금 잰 값과 다릅니다. 발송은 이 IP 로 나가니,');
+      lines.push('  알리고에 등록해야 하는 것도 이 쪽입니다.');
+    }
+  }
   return lines.join('\n');
+}
+
+/** 트리거가 적어 둔 IP 를 읽는다. 없으면 null. */
+function ipTrialRead_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(IP_TRIAL_KEY);
+  if (!raw) return null;
+  try {
+    var v = JSON.parse(raw);
+    return (v && typeof v === 'object') ? v : null;
+  } catch (e) { return null; }
 }
 
 /**

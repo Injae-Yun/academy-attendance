@@ -32,6 +32,7 @@ function onOpen() {
       .addItem('발송 설정 점검', 'menuCheckMessaging')
       .addItem('공급사 연결 확인', 'menuCheckProvider')
       .addItem('발신 IP 확인', 'menuCheckOutboundIp')
+      .addItem('트리거 IP 확인', 'menuIpTrial')
       .addItem('알리고 진단', 'menuDiagnoseAligo')
       .addItem('수신거부 링크 만들기', 'menuOptoutSample')
       .addItem('지금 발송 처리', 'menuProcessQueue')
@@ -211,6 +212,16 @@ function menuCheckProvider() {
 
 function menuCheckOutboundIp() {
   showReport_('발신 IP 확인', checkOutboundIp(5));
+}
+
+/**
+ * 실제 발송을 하는 트리거가 어떤 IP 로 나가는지 재 본다.
+ *
+ * 메뉴로 재면 사람이 눌러서 도는 것이라, 트리거가 도는 새벽과
+ * 같은 IP 라는 보장이 없다. 알리고에 등록할 IP 는 트리거 쪽이다.
+ */
+function menuIpTrial() {
+  showReport_('트리거 IP 확인', ipTrialStart());
 }
 
 function menuDiagnoseAligo() {
