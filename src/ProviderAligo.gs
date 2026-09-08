@@ -70,6 +70,19 @@ function AligoProvider_() {
           message: '알리고 로그인 확인됨 (아이디 ' + userId + ')'
         };
       }
+      // 알리고는 등록된 서버 IP 에서만 API 를 받는다. 그런데 Apps Script 는
+      // 구글 서버에서 도는 데다 나갈 때 쓰는 IP 가 그때그때 달라, 미리 한 개를
+      // 적어 둘 수가 없다. 키·아이디 문제로 오해하면 한참 헤맨다.
+      if (String(t.error).indexOf('IP') !== -1) {
+        return {
+          checked: true, ok: false,
+          message: t.error + '\n' +
+            '    키와 아이디 문제가 아닙니다. 알리고가 등록된 서버 IP 에서만\n' +
+            '    호출을 받는데, 이 앱은 구글 서버에서 돌고 나가는 IP 가\n' +
+            '    매번 달라 미리 등록해 둘 수 없습니다.\n' +
+            '    알리고에 IP 제한 해제를 요청하거나 다른 공급사를 쓰셔야 합니다.'
+        };
+      }
       return {
         checked: true, ok: false,
         message: t.error + '\n' +
