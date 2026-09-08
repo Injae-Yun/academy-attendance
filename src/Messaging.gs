@@ -31,6 +31,9 @@ function getProvider_() {
 function TestProvider_() {
   return {
     name: 'test',
+    verify: function () {
+      return { checked: true, ok: true, message: '테스트 모드라 확인할 인증정보가 없습니다.' };
+    },
     sendAlimtalk: function (to, templateId, vars, body, fallbackText) {
       Logger.log('[테스트 알림톡] ' + to + ' / ' + templateId + ' / ' + JSON.stringify(vars));
       Logger.log('  본문: ' + body);
@@ -369,6 +372,44 @@ function retryFailedMessages() {
   if (!count) return '재시도할 실패 건이 없습니다.';
   var result = processMessageQueue();
   return '[재시도] ' + count + '건을 대기로 돌렸습니다.\n\n' + result.report;
+}
+
+/**
+ * 공급사에 실제로 물어본다. 아무것도 보내지 않는다.
+ *
+ * 설정 점검은 시트에 값이 있는지만 본다. 값이 틀렸는지는 알 수 없어서
+ * 첫 등원에서야 실패를 발견하게 된다. 그 전에 확인할 길을 둔다.
+ *
+ * @return {string} 리포트
+ */
+function checkProviderAuth() {
+  applyProbedLayout_();
+
+  var provider = getProvider_();
+  var lines = ['[공급사 연결 확인]', '  공급사: ' + provider.name, ''];
+
+  if (!provider.verify) {
+    lines.push('  이 공급사는 확인 기능이 없습니다.');
+    return lines.join('\n');
+  }
+
+  var res;
+  try {
+    res = provider.verify();
+  } catch (e) {
+    return lines.concat(['  ! 확인 중 오류: ' + e.message]).join('\n');
+  }
+
+  if (!res.checked) {
+    lines.push('  - ' + res.message);
+  } else if (res.ok) {
+    lines.push('  ✓ ' + res.message);
+    lines.push('');
+    lines.push('  인증은 통과했습니다. 템플릿 코드가 맞는지는 실제 발송으로 확인하세요.');
+  } else {
+    lines.push('  ✗ ' + res.message);
+  }
+  return lines.join('\n');
 }
 
 /**

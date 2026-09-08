@@ -54,6 +54,31 @@ function AligoProvider_() {
     name: 'aligo',
 
     /**
+     * 키와 아이디가 맞는지 확인한다. 아무것도 보내지 않는다.
+     *
+     * 토큰 발급은 인증만 보는 호출이라 문자도 알림톡도 나가지 않는다.
+     * 아이디를 짐작으로 넣어 두고 첫 등원에서 실패를 발견하는 것보다 낫다.
+     */
+    verify: function () {
+      var bad = missingCreds();
+      if (bad) return { checked: true, ok: false, message: bad.error };
+
+      var t = issueToken();
+      if (t.ok) {
+        return {
+          checked: true, ok: true,
+          message: '알리고 로그인 확인됨 (아이디 ' + userId + ')'
+        };
+      }
+      return {
+        checked: true, ok: false,
+        message: t.error + '\n' +
+          '    API 키나 아이디가 틀렸을 수 있습니다. 아이디는 알리고에 ' +
+          '로그인할 때 쓰는 그 아이디입니다.'
+      };
+    },
+
+    /**
      * @param {string} body         알림톡 본문. 심사 통과한 템플릿과 글자까지 같아야 한다
      * @param {string} fallbackText 알림톡이 막혔을 때 대신 갈 SMS 본문 (이모지 없음)
      */

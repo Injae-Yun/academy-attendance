@@ -70,6 +70,20 @@ function SolapiProvider_() {
     name: 'solapi',
 
     /**
+     * 솔라피는 인증만 보는 값싼 호출이 마땅치 않다.
+     * 없는 확인을 한 척하지 않고 그대로 알린다.
+     */
+    verify: function () {
+      if (!apiKey || !apiSecret) {
+        return { checked: true, ok: false, message: '솔라피 인증정보가 없습니다.' };
+      }
+      return {
+        checked: false, ok: false,
+        message: '솔라피는 미리 확인할 방법이 없습니다. 실제 발송 1건으로 확인하세요.'
+      };
+    },
+
+    /**
      * 알림톡. SMS 폴백을 같은 요청에 실어 보낸다.
      *
      * 알림톡 본문은 카카오가 templateId + variables 로 만들므로 body 는 쓰지 않는다.
