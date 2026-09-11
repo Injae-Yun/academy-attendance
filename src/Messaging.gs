@@ -248,6 +248,37 @@ function sendOne_(provider, academy, student, log) {
  * 발송이 되는 줄 알고 지나가게 되므로, 점검 화면들이 크게 알린다.
  */
 /**
+ * 이 학생에게 오늘 같은 구분의 알림이 이미 나갔는가.
+ *
+ * 기록 단계에서 막는 것만으로는 부족하다. 기기가 여러 대고, 오프라인
+ * 큐가 늦게 올라오기도 하고, 관리자가 고치다 줄이 늘기도 한다.
+ * 보호자 입장에서 같은 알림이 두 번 오는 것은 어느 경로로 왔든 똑같이
+ * 곤란하므로, 내보내는 마지막 길목에서 한 번 더 본다.
+ *
+ * 고쳐서 다시 보내는 경우(재발송)는 사람이 관리자 화면에서 명시적으로
+ * 지시하는 것이라 이 길을 타지 않는다.
+ */
+/** 학생·구분·날짜. 같은 값이면 보호자에게는 같은 알림이다. */
+function sendKey_(log) {
+  return log.학생ID + '|' + log.구분 + '|' +
+    (log.출결시각 ? fmtDate_(log.출결시각) : '');
+}
+
+function alreadySentToday_(logs, target) {
+  for (var i = 0; i < logs.length; i++) {
+    var r = logs[i];
+    if (r.행 === target.행) continue;
+    if (r.학생ID !== target.학생ID) continue;
+    if (r.구분 !== target.구분) continue;
+    if (r.상태 === LOGST.취소됨) continue;
+    if (r.발송상태 !== SENDST.성공) continue;
+    if (!r.출결시각 || !target.출결시각) continue;
+    if (sameDay_(r.출결시각, target.출결시각)) return true;
+  }
+  return false;
+}
+
+/**
  * 자동 발송을 할지. 기본은 켬.
  *
  * 출결 기능을 시험하는 동안 학생이 태블릿을 누를 때마다 요금이 나가면
@@ -330,6 +361,7 @@ function processMessageQueue() {
 
     var sent = 0, failed = 0, skipped = 0;
     var lines = [];
+    var sentThisRun = {};
 
     pending.forEach(function (log) {
       var student = byId[log.학생ID];
@@ -345,6 +377,19 @@ function processMessageQueue() {
         return;
       }
 
+      // 같은 날 같은 구분으로 이미 나갔으면 다시 보내지 않는다.
+      // 기록을 막는 것과 별개의 방벽이다. 어느 한쪽이 뚫려도
+      // 보호자에게 같은 알림이 두 번 가지는 않는다.
+      //
+      // logs 는 이 배치가 시작될 때의 사진이라, 같은 배치에 두 줄이
+      // 들어 있으면 서로를 보지 못한다. 방금 보낸 것도 함께 센다.
+      if (sentThisRun[sendKey_(log)] || alreadySentToday_(logs, log)) {
+        markSendResult_(log.행, SENDST.중복, '', '',
+          '같은 날 ' + log.구분 + ' 알림이 이미 나갔습니다');
+        skipped++;
+        return;
+      }
+
       var res;
       try {
         res = sendOne_(provider, academy, student, log);
@@ -354,6 +399,7 @@ function processMessageQueue() {
 
       if (res.ok) {
         markSendResult_(log.행, SENDST.성공, res.channel, res.messageId, '');
+        sentThisRun[sendKey_(log)] = true;
         sent++;
         return;
       }

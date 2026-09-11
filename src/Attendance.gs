@@ -149,6 +149,11 @@ function recordAttendance(req) {
     // 중복 방지 — 같은 학생·같은 구분을 짧은 시간 안에 다시 누른 경우
     var blockMin = settingInt_('중복차단분');
     var logs = readLogs_();
+
+    // force 는 오프라인 큐처럼 이미 확인을 거친 경우를 위한 것이다.
+    // 키오스크에서 온 force 는 믿지 않는다. 화면을 조작하면 그만이다.
+    if (device.mode === MODE.키오스크 && !isAdmin) req.force = false;
+
     if (!req.force) {
       for (var j = logs.length - 1; j >= 0; j--) {
         var prev = logs[j];
@@ -158,6 +163,19 @@ function recordAttendance(req) {
         if (!prev.출결시각) continue;
         // 과목이 겹치지 않으면 다른 수업이므로 중복이 아니다
         if (!subjectsOverlap_(prevSubjects_(prev), req.subjects, student)) continue;
+        // 키오스크는 아이들이 쓴다. 확인 창을 띄우면 그냥 눌러 버리고
+        // 보호자에게 알림이 한 번 더 나간다. 실제로 그렇게 나갔다.
+        // 여기서는 묻지 않고 막는다. 고치는 일은 직원이 한다.
+        if (device.mode === MODE.키오스크 && !isAdmin && sameDay_(at, prev.출결시각)) {
+          return {
+            ok: false,
+            alreadyDone: true,
+            message: (student.표시명 || student.이름) + ' 학생은 이미 ' +
+              fmtTime_(prev.출결시각) + '에 ' + kind + ' 했습니다.',
+            hint: '고쳐야 하면 선생님께 말씀해 주세요.'
+          };
+        }
+
         var gap = Math.abs(diffMinutes_(at, prev.출결시각));
         if (gap <= blockMin) {
           // 새 줄을 만들지 않고 그 기록을 고칠 것이므로, 어느 기록인지 알려준다.

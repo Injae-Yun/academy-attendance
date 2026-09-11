@@ -788,6 +788,13 @@
       if (isToday) rollback(s.id, kind, previous);
 
       if (res.needsRegister) { showRegister(res.message); return; }
+      // 키오스크에서 같은 날 두 번 누른 경우. 물어보지 않고 알려만 준다.
+      // 여기서 확인을 띄우면 아이가 그냥 누르고, 보호자에게 또 나간다.
+      if (res.alreadyDone) {
+        closeSheet();
+        toast(res.message + (res.hint ? ' ' + res.hint : ''), true);
+        return;
+      }
       if (res.needsConfirm) {
         // 서버가 알려준 기록을 고치는 것이지 새로 남기는 게 아니다
         again.replaceId = res.replaceId || '';

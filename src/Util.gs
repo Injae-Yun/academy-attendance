@@ -10,6 +10,19 @@ function now_() {
 }
 
 /** Date → 'yyyy-MM-dd' */
+/**
+ * 같은 날인가. 하루가 넘어갔으면 다시 등원하는 것이 맞다.
+ *
+ * 자정을 넘겨 연습하고 가는 학생이 있어도 날짜로만 가른다.
+ * '몇 시간 안에' 로 재면 어제 22시 등원이 오늘 새벽까지 붙잡는다.
+ */
+function sameDay_(a, b) {
+  if (!a || !b) return false;
+  return a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+}
+
 function fmtDate_(d) {
   return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
 }
