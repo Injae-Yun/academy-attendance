@@ -366,6 +366,13 @@ function processMessageQueue() {
     pending.forEach(function (log) {
       var student = byId[log.학생ID];
 
+      // 쉬고 있는 집에 출결 알림이 가면 안 된다. 기록 단계에서도
+      // 막지만, 휴원으로 바뀌기 전에 쌓인 대기 건이 나중에 나갈 수 있다.
+      if (student && student.상태 === ST.휴원) {
+        markSendResult_(log.행, SENDST.휴원, '', '', '휴원 중입니다');
+        skipped++;
+        return;
+      }
       if (!student || !student.알림수신) {
         markSendResult_(log.행, SENDST.수신거부, '', '', '');
         skipped++;
@@ -383,6 +390,14 @@ function processMessageQueue() {
       //
       // logs 는 이 배치가 시작될 때의 사진이라, 같은 배치에 두 줄이
       // 들어 있으면 서로를 보지 못한다. 방금 보낸 것도 함께 센다.
+      // 등원한 적 없는 학생의 하원 알림은 보호자를 놀라게 한다.
+      // 기록이 어떤 경로로 들어왔든 이 자리에서 한 번 더 본다.
+      if (log.구분 === KIND.하원 && !hasArrivalToday_(logs, { 학생ID: log.학생ID }, log.출결시각)) {
+        markSendResult_(log.행, SENDST.등원없음, '', '', '오늘 등원 기록이 없습니다');
+        skipped++;
+        return;
+      }
+
       if (sentThisRun[sendKey_(log)] || alreadySentToday_(logs, log)) {
         markSendResult_(log.행, SENDST.중복, '', '',
           '같은 날 ' + log.구분 + ' 알림이 이미 나갔습니다');

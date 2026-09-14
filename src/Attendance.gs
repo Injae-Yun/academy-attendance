@@ -195,6 +195,22 @@ function recordAttendance(req) {
       }
     }
 
+    // 등원한 적 없는데 하원을 누르면 보호자가 놀란다. 아이가 잘못
+    // 누른 것이 대부분이라 키오스크에서는 막는다.
+    //
+    // 직원은 막지 않는다. 아침에 등원을 놓친 날에도 하원은 남겨야 하고,
+    // 그때마다 확인 창이 뜨면 고치는 일이 성가셔진다. 보호자 쪽은
+    // 발송 단계에서 따로 막으므로 알림은 어차피 나가지 않는다.
+    if (kind === KIND.하원 && device.mode === MODE.키오스크 && !isAdmin &&
+        !hasArrivalToday_(logs, student, at)) {
+      return {
+        ok: false,
+        alreadyDone: true,
+        message: (student.표시명 || student.이름) + ' 학생은 오늘 등원 기록이 없습니다.',
+        hint: '선생님께 말씀해 주세요.'
+      };
+    }
+
     var display = student.표시명 || student.이름;
 
     // 중복 확인에서 "고칠까요?" 에 확인을 누른 경우.
@@ -214,7 +230,11 @@ function recordAttendance(req) {
 
     // 발송 조건을 미리 정해 둔다 (실제 발송은 트리거가 한다)
     var sendState = SENDST.대기;
-    if (!student.알림수신) sendState = SENDST.수신거부;
+    // 휴원 중인 학생의 기록은 남기되 알림은 보내지 않는다.
+    // 복귀 첫날 기록이 막히면 곤란해서 기록 자체는 열어 두었는데,
+    // 그 틈으로 알림까지 나가면 쉬고 있는 집에 연락이 간다.
+    if (student.상태 === ST.휴원) sendState = SENDST.휴원;
+    else if (!student.알림수신) sendState = SENDST.수신거부;
     else if (!student.보호자연락처) sendState = SENDST.번호없음;
     else if (isAdmin && req.notify !== true) {
       // 소급 기록은 기본적으로 보내지 않는다.
@@ -315,6 +335,24 @@ function subjectsOverlap_(a, b, student) {
  * 로그 비고를 만든다.
  * 나중에 왜 이 기록이 이렇게 들어갔는지 알 수 있어야 한다.
  */
+/**
+ * 그 날 등원 기록이 있는가.
+ *
+ * 취소된 줄은 없는 것으로 본다. 취소한 등원을 근거로 하원 알림이
+ * 나가면 앞뒤가 맞지 않는다.
+ */
+function hasArrivalToday_(logs, student, at) {
+  for (var i = 0; i < logs.length; i++) {
+    var r = logs[i];
+    if (r.학생ID !== student.학생ID) continue;
+    if (r.구분 !== KIND.등원) continue;
+    if (r.상태 === LOGST.취소됨) continue;
+    if (!r.출결시각) continue;
+    if (sameDay_(r.출결시각, at)) return true;
+  }
+  return false;
+}
+
 function buildNote_(req, isAdmin, at, enteredAt) {
   var parts = [];
   if (req.force) parts.push('중복 확인 후 기록');
