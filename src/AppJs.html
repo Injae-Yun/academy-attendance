@@ -1330,10 +1330,37 @@
 
     verify.kind = kind;
     verify.tries = 0;
-    $('verifyAsk').textContent = s.name + ' 학생이 ' + kind + ' 하는 게 맞습니까?';
+    setVerifyAsk(s.name, kind);
     newVerifyCode();
     $('verifyBackdrop').classList.remove('hidden');
     $('verifyDialog').classList.remove('hidden');
+  }
+
+  /**
+   * 누가 무엇을 하는지 묻는 줄.
+   *
+   * 이름과 등·하원을 눈에 띄게 갈라 놓는다. 아이는 글을 다 읽지 않고
+   * 넘어가므로, 자기 이름이 아니거나 누르려던 것이 아니면 그 두 군데에서
+   * 걸려야 한다. 색은 방금 누른 버튼과 같게 맞춘다.
+   *
+   * 이름은 명부에서 온 값이라 innerHTML 로 넣지 않는다.
+   */
+  function setVerifyAsk(name, kind) {
+    var ask = $('verifyAsk');
+    ask.innerHTML = '';
+
+    var who = document.createElement('span');
+    who.className = 'verify-name';
+    who.textContent = name;
+
+    var what = document.createElement('span');
+    what.className = 'verify-kind ' + (kind === '하원' ? 'out' : 'in');
+    what.textContent = kind;
+
+    ask.appendChild(who);
+    ask.appendChild(document.createTextNode(' 학생이 '));
+    ask.appendChild(what);
+    ask.appendChild(document.createTextNode(' 하는 게 맞습니까?'));
   }
 
   /** 10~99 중 하나. 매번 새로 뽑는다. */

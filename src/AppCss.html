@@ -506,7 +506,18 @@ button { cursor: pointer; border: none; background: none; }
   padding: 20px; background: var(--panel); text-align: center;
   border-radius: var(--radius); box-shadow: 0 8px 32px rgba(16, 24, 40, .24);
 }
-.verify-ask { margin: 0 0 4px; font-size: 18px; font-weight: 700; line-height: 1.4; }
+.verify-ask {
+  margin: 0 0 4px; font-size: 18px; font-weight: 600; line-height: 1.6;
+  color: var(--ink-soft);
+}
+/* 아이는 글을 다 읽지 않는다. 이름과 등·하원에서 걸리게 한다. */
+.verify-name, .verify-kind {
+  display: inline-block; padding: 2px 8px; border-radius: 8px;
+  font-size: 20px; font-weight: 800;
+}
+.verify-name { background: #e8eefc; color: var(--brand-dark); }
+.verify-kind.in { background: #e3f4e9; color: var(--in-dark); }
+.verify-kind.out { background: #fdeee0; color: var(--out-dark); }
 .verify-lead { margin: 0 0 8px; font-size: 14px; color: var(--ink-soft); }
 .verify-code {
   margin: 0; font-size: 52px; font-weight: 800; letter-spacing: 8px;
