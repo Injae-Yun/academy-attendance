@@ -71,8 +71,26 @@ function getBootstrap(token) {
     단위분: 5,
     관리자유효분: ADMIN_TICKET_MIN
   };
+  base.오입력방지 = misTouchGuard_();
   try { touchDevice_(d.행); } catch (e) { /* 마지막 사용 기록 실패는 무시한다 */ }
   return base;
+}
+
+/**
+ * 오입력 방지를 어디까지 걸지.
+ *
+ * 기본은 키오스크만이다. 하루에 수십 번 누르는 직원에게는 방해가 되고,
+ * 직원은 실수해도 곧바로 고칠 수 있기 때문이다. 다만 어느 태블릿을
+ * 아이들이 쓰게 될지는 학원마다 다르므로 설정으로 열어 둔다.
+ *
+ * @return {string} 'kiosk' | 'always' | 'off'
+ */
+function misTouchGuard_() {
+  var raw = str_(setting_('오입력방지'));
+  if (!raw) return 'kiosk';
+  if (raw === '항상' || raw.toLowerCase() === 'always') return 'always';
+  if (raw === '끔' || raw === 'FALSE' || raw.toLowerCase() === 'off') return 'off';
+  return 'kiosk';
 }
 
 /* ── 기록 ─────────────────────────────────────────────────────────── */
