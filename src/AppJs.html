@@ -642,6 +642,7 @@
 
   function closeSheet() {
     closeTimePicker();
+    closeVerify();
     $('sheet').classList.add('hidden');
     $('sheetBackdrop').classList.add('hidden');
     state.sheetStudent = null;
@@ -1293,6 +1294,99 @@
 
   var confirmAction = null;
 
+  /* ── 오입력 방지 ────────────────────────────────────────────
+   *
+   * 아이들이 화면을 마구 누르다 등원이 눌리는 일이 있었다. 한 번 더
+   * 묻는 것만으로는 소용없다. 누르는 김에 같이 눌러 버린다.
+   *
+   * 그래서 화면에 뜬 두 자리 숫자를 따라 눌러야 넘어가게 한다.
+   * 매번 다른 숫자라 외울 수 없고, 틀리면 숫자가 바뀌므로 찍어서
+   * 통과할 수도 없다. 손이 가는 대로 눌러서는 통과하지 못한다.
+   *
+   * 직원 태블릿과 관리자 모드에서는 하지 않는다. 하루에 수십 번
+   * 누르는 사람에게는 방해일 뿐이고, 실수해도 곧바로 고칠 수 있다.
+   */
+  var verify = { code: '', entry: '', kind: '', tries: 0 };
+
+  function needsVerify() {
+    return state.device && state.device.mode === 'kiosk' && !isAdminActive();
+  }
+
+  function askVerify(kind) {
+    if (!needsVerify()) { submit(kind, false); return; }
+
+    var s = state.sheetStudent;
+    if (!s) return;
+
+    verify.kind = kind;
+    verify.tries = 0;
+    $('verifyAsk').textContent = s.name + ' 학생이 ' + kind + ' 하는 게 맞습니까?';
+    newVerifyCode();
+    $('verifyBackdrop').classList.remove('hidden');
+    $('verifyDialog').classList.remove('hidden');
+  }
+
+  /** 10~99 중 하나. 매번 새로 뽑는다. */
+  function newVerifyCode() {
+    verify.code = String(Math.floor(Math.random() * 90) + 10);
+    verify.entry = '';
+    $('verifyCode').textContent = verify.code;
+    $('verifyEntry').textContent = '';
+  }
+
+  function closeVerify() {
+    $('verifyBackdrop').classList.add('hidden');
+    $('verifyDialog').classList.add('hidden');
+    $('verifyErr').classList.add('hidden');
+    verify.entry = '';
+  }
+
+  function verifyPush(digit) {
+    if (verify.entry.length >= 2) return;
+    verify.entry += digit;
+    $('verifyEntry').textContent = verify.entry;
+    if (verify.entry.length < 2) return;
+
+    if (verify.entry === verify.code) {
+      closeVerify();
+      submit(verify.kind, false);
+      return;
+    }
+
+    // 틀리면 숫자를 새로 뽑는다. 그래야 찍어서 통과할 수 없다.
+    verify.tries++;
+    var err = $('verifyErr');
+    err.textContent = verify.tries >= 3
+      ? '숫자가 다릅니다. 어려우면 선생님께 말씀해 주세요.'
+      : '숫자가 다릅니다. 새 숫자를 눌러 주세요.';
+    err.classList.remove('hidden');
+    newVerifyCode();
+  }
+
+  function verifyBack() {
+    verify.entry = verify.entry.slice(0, -1);
+    $('verifyEntry').textContent = verify.entry;
+  }
+
+  function buildVerifyPad() {
+    var pad = $('verifyPad');
+    pad.innerHTML = '';
+    var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '지우기', '0', '←'];
+    keys.forEach(function (k) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = k;
+      if (k === '지우기' || k === '←') b.className = 'wide';
+      b.addEventListener('click', function () {
+        $('verifyErr').classList.add('hidden');
+        if (k === '지우기') { verify.entry = ''; $('verifyEntry').textContent = ''; return; }
+        if (k === '←') { verifyBack(); return; }
+        verifyPush(k);
+      });
+      pad.appendChild(b);
+    });
+  }
+
   function askConfirm(text, onYes) {
     $('confirmText').textContent = text;
     confirmAction = onYes;
@@ -1345,8 +1439,8 @@
 
     $('refreshBtn').addEventListener('click', function () { refresh(false); });
 
-    $('btnIn').addEventListener('click', function () { submit('등원', false); });
-    $('btnOut').addEventListener('click', function () { submit('하원', false); });
+    $('btnIn').addEventListener('click', function () { askVerify('등원'); });
+    $('btnOut').addEventListener('click', function () { askVerify('하원'); });
     $('minus5').addEventListener('click', function () { adjust(-5); });
     $('plus5').addEventListener('click', function () { adjust(5); });
     $('minus1').addEventListener('click', function () { adjust(-1); });
@@ -1369,6 +1463,11 @@
       if (fn) fn();
     });
     $('confirmNo').addEventListener('click', closeConfirm);
+
+    buildVerifyPad();
+    $('verifyCancel').addEventListener('click', closeVerify);
+    // 뒷배경을 눌러도 닫힌다. 갇혔다고 느끼면 아이가 당황한다.
+    $('verifyBackdrop').addEventListener('click', closeVerify);
     $('confirmBackdrop').addEventListener('click', closeConfirm);
 
     window.addEventListener('online', flushQueue);

@@ -291,6 +291,19 @@
   </div>
 </section>
 
+<!-- 키오스크 오입력 방지 — 두 자리를 따라 눌러야 기록된다 -->
+<div id="verifyBackdrop" class="backdrop hidden"></div>
+<section id="verifyDialog" class="verify hidden" role="alertdialog"
+         aria-labelledby="verifyAsk">
+  <p id="verifyAsk" class="verify-ask"></p>
+  <p class="verify-lead">맞으면 아래 숫자를 눌러 주세요</p>
+  <p id="verifyCode" class="verify-code" aria-live="polite"></p>
+  <div id="verifyEntry" class="verify-entry" aria-live="polite"></div>
+  <p id="verifyErr" class="verify-err hidden"></p>
+  <div id="verifyPad" class="verify-pad"></div>
+  <button id="verifyCancel" class="ghost-btn verify-cancel">취소</button>
+</section>
+
 <div id="toast" class="toast hidden"></div>
 
 <?!= include('AppJs'); ?>
