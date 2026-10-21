@@ -62,7 +62,7 @@ function getBootstrap(token) {
   var roster = getRoster();
   base.needsRegister = false;
   base.device = { mode: d.mode, label: d.label };
-  base.roster = roster.students;
+  base.roster = rosterForDevice_(roster.students, d.mode);
   base.rosterVersion = roster.version;
   base.attendance = getTodayAttendance_();
   base.limits = {
@@ -91,6 +91,35 @@ function misTouchGuard_() {
   if (raw === '항상' || raw.toLowerCase() === 'always') return 'always';
   if (raw === '끔' || raw === 'FALSE' || raw.toLowerCase() === 'off') return 'off';
   return 'kiosk';
+}
+
+/**
+ * 태블릿 명부에서 휴원생을 어디까지 감출지.
+ *
+ * 처음에는 복귀 첫날을 위해 휴원생도 내려줬는데, 쉬는 학생이 명부에
+ * 보이지 않았으면 한다는 요청이 있어 기본을 '감춤' 으로 바꿨다.
+ * 다시 보여야 할 때를 위해 설정으로 열어 둔다.
+ *
+ * 관리자 화면(adminRoster)은 이 값과 무관하게 휴원생을 보여준다.
+ * 갑자기 온 휴원생을 기록할 길은 그쪽에 남는다.
+ *
+ * @return {string} 'always' | 'kiosk' | 'off'
+ */
+function hideOnLeave_() {
+  var raw = str_(setting_('휴원생숨김'));
+  // 시트가 FALSE 를 체크박스 값으로 바꿔 넣어도 '끔' 으로 읽는다
+  if (raw === '끔' || raw.toUpperCase() === 'FALSE' || raw.toLowerCase() === 'off') return 'off';
+  if (raw === '키오스크' || raw.toLowerCase() === 'kiosk') return 'kiosk';
+  // 항상·TRUE·오타는 모두 감춤으로 본다. 요청받은 쪽이 기본이다.
+  return 'always';
+}
+
+/** 이 기기에 내려줄 명부. 설정에 따라 휴원생을 뺀다. */
+function rosterForDevice_(students, mode) {
+  var how = hideOnLeave_();
+  var hide = how === 'always' || (how === 'kiosk' && mode === MODE.키오스크);
+  if (!hide) return students;
+  return students.filter(function (s) { return !s.onLeave; });
 }
 
 /* ── 기록 ─────────────────────────────────────────────────────────── */
@@ -511,8 +540,9 @@ function recordAttendanceBatch(token, items) {
 /** 명부와 오늘 현황만 다시 받는다 (앱 새로고침용). */
 function refreshRoster(token) {
   applyProbedLayout_();
+  var d;
   try {
-    requireDevice_(token);
+    d = requireDevice_(token);
   } catch (e) {
     return { ok: false, needsRegister: true, message: e.message };
   }
@@ -521,7 +551,7 @@ function refreshRoster(token) {
   var roster = getRoster();
   return {
     ok: true,
-    roster: roster.students,
+    roster: rosterForDevice_(roster.students, d.mode),
     rosterVersion: roster.version,
     attendance: getTodayAttendance_(),
     serverTime: fmtStamp_(now_())
